@@ -1,3 +1,18 @@
+/*
+ * 05_par_mimd_msbfs.cpp
+ * ---------------------
+ * Parallel MIMD + Multi-Source BFS (bit-parallelism)
+ *
+ * Algorithm: Combines MIMD thread-level parallelism with 64-bit
+ *            bit-packing.  Each thread independently processes a
+ *            batch of 64 sources using bitwise OR-semiring SpMM.
+ *            Threads do NOT share frontier state — pure MIMD.
+ *            CC(v) = (n-1) / Σ d(v,u)
+ *
+ * Parallelism: MIMD — each thread owns a batch of 64 BFS sources
+ * Complexity:  Time O(V × E / (64 × T)),  Space O(V × T)
+ */
+
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -59,7 +74,7 @@ vector<double> naive_cc(const Graph& g) {
             for (int v : g.adj[u])
                 if (dist[v] == -1) { dist[v] = dist[u]+1; td += dist[v]; reach++; q.push(v); }
         }
-        if (td > 0) cc[s] = (double)reach / td;
+        if (td > 0) cc[s] = (double)(n - 1) / td;
     }
     return cc;
 }

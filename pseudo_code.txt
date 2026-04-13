@@ -1,0 +1,272 @@
+================================================================
+PSEUDOCODE FOR ALL IMPLEMENTATIONS
+Parallelising Closeness Centrality — Mini Project
+================================================================
+
+================================================================
+FILE 01: Sequential Naive BFS
+================================================================
+
+ALGORITHM SeqNaiveBFS(G = (V, E)):
+  FOR each source s in V:
+    dist[] ← BFS(G, s)
+    totalDist ← Σ dist[v] for all v ≠ s
+    CC(s) ← (n-1) / totalDist
+  RETURN CC[]
+
+Complexity: Time O(V × (V+E)), Space O(V)
+Parallelism: None
+
+================================================================
+FILE 02: Sequential Multi-Source BFS (Bit-Parallelism)
+================================================================
+
+ALGORITHM SeqMultiSourceBFS(G = (V, E)):
+  FOR batch_start = 0 to n step 64:
+    batch_size ← min(64, n - batch_start)
+    
+    // Initialize: each source gets one bit position
+    FOR i = 0 to batch_size-1:
+      frontier[batch_start + i] ← (1 << i)
+      visited[batch_start + i]  ← (1 << i)
+    
+    level ← 0
+    WHILE frontier has any nonzero entry:
+      level ← level + 1
+      nextF[] ← all zeros
+      
+      // OR-semiring SpMM step (push direction)
+      FOR each node u with frontier[u] ≠ 0:
+        FOR each neighbor v of u:
+          nextF[v] ← nextF[v] | frontier[u]
+      
+      // Update: mask visited, accumulate distances
+      FOR each node v:
+        new_bits ← nextF[v] & ~visited[v]
+        IF new_bits ≠ 0:
+          visited[v] ← visited[v] | new_bits
+          sumDist[v] ← sumDist[v] + popcount(new_bits) × level
+      
+      frontier ← nextF
+  
+  CC(v) ← (n-1) / sumDist[v]
+  RETURN CC[]
+
+Complexity: Time O(V × E / 64), Space O(V)
+Parallelism: None (data-level bit-parallelism within 64-bit word)
+
+================================================================
+FILE 03: Sequential BCC + R3/R4 Reduction (Shukla 2020)
+================================================================
+
+ALGORITHM SeqBCCReduced(G = (V, E)):
+  // Phase 1: Identify structural reductions
+  BCCs, ArtPoints ← TarjanBCC(G)
+  R3_nodes ← { v ∈ V : deg(v)=3 AND all 3 neighbors form a triangle }
+  R4_nodes ← { v ∈ V : deg(v)=4 AND neighbors form a 4-cycle }
+  redundant ← R3_nodes ∪ R4_nodes
+  
+  // Phase 2: BFS only from non-redundant sources
+  FOR each source s NOT in redundant:
+    dist[] ← BFS(G, s)
+    sumDist[s] ← Σ dist[v]
+    // Also accumulate reverse distances for redundant nodes
+    FOR each v in redundant:
+      sumDist[v] ← sumDist[v] + dist[v]
+  
+  // Phase 3: Compute inter-redundant distances
+  FOR each pair (ri, rj) in redundant:
+    d(ri,rj) ← inferred from neighbor distances
+    sumDist[ri] += d(ri,rj)
+    sumDist[rj] += d(ri,rj)
+  
+  CC(v) ← (n-1) / sumDist[v]
+  RETURN CC[]
+
+Complexity: Time O((V-R) × (V+E)), Space O(V)
+Parallelism: None
+
+================================================================
+FILE 04: Parallel MIMD — One Thread Per Source
+================================================================
+
+ALGORITHM ParallelNaiveMIMD(G, T threads):
+  // Each thread independently picks sources and runs full BFS
+  PARALLEL FOR s = 0 to n-1 (schedule: dynamic):
+    // Thread-local dist[] and queue — no shared state
+    dist[] ← BFS(G, s)               // thread-local
+    totalDist ← Σ dist[v]
+    CC(s) ← (n-1) / totalDist
+  RETURN CC[]
+
+Complexity: Time O(V × (V+E) / T), Space O(V × T)
+Parallelism: MIMD — each thread runs independent BFS, no synchronization
+
+================================================================
+FILE 05: Parallel MIMD + Multi-Source BFS (Bit-Parallelism)
+================================================================
+
+ALGORITHM ParallelMIMD_MSBFS(G, T threads):
+  numBatches ← ⌈n / 64⌉
+  threadSumDist[T][n] ← all zeros
+  
+  // Each thread independently processes batches of 64 sources
+  PARALLEL FOR batch = 0 to numBatches-1 (schedule: dynamic):
+    tid ← current thread ID
+    // Thread-local frontier/visited — no shared state
+    frontier[], visited[] ← initialize for 64 sources in this batch
+    
+    level ← 0
+    WHILE frontier has nonzero entry:
+      level ← level + 1
+      nextF[] ← OR-semiring SpMM(frontier, adjacency)
+      FOR each v: new_bits ← nextF[v] & ~visited[v]
+        threadSumDist[tid][v] += popcount(new_bits) × level
+      frontier ← nextF & ~visited
+      visited ← visited | nextF
+  
+  // Reduce across threads
+  PARALLEL FOR v = 0 to n-1:
+    total ← Σ threadSumDist[t][v] for all t
+    CC(v) ← (n-1) / total
+  RETURN CC[]
+
+Complexity: Time O(V × E / (64 × T)), Space O(V × T)
+Parallelism: MIMD — each thread owns independent batch, no sharing
+
+================================================================
+FILE 06: Parallel Level-Synchronous Pull-Based BFS
+================================================================
+
+ALGORITHM ParallelLevelSync_Pull(G, T threads):
+  FOR each batch of 64 sources:
+    frontier[], visited[] ← initialize
+    level ← 0
+    
+    WHILE frontier has nonzero entry:
+      level ← level + 1
+      
+      // PULL direction: each thread processes target nodes
+      // Each thread writes ONLY to its own v → no locks needed
+      PARALLEL FOR v = 0 to n-1 (all threads cooperate):
+        bits ← 0
+        FOR each neighbor u of v:
+          bits ← bits | frontier[u]    // PULL: read from neighbors
+        new_bits ← bits & ~visited[v]
+        nextF[v] ← new_bits
+        IF new_bits ≠ 0:
+          visited[v] ← visited[v] | new_bits
+          sumDist[v] += popcount(new_bits) × level
+      
+      // BARRIER — all threads sync between levels
+      frontier ← nextF
+  
+  CC(v) ← (n-1) / sumDist[v]
+  RETURN CC[]
+
+Complexity: Time O(diameter × E / T), Space O(V)
+Parallelism: MIMD — fine-grained level-synchronous
+             (threads cooperate on SAME level, barrier between levels)
+             Pull direction eliminates write conflicts — lock-free
+
+================================================================
+FILE 07: Dynamic CC with Affected-Source Filtering (Shukla 2020)
+================================================================
+
+ALGORITHM DynamicCC(G, T threads):
+  // Initial: full APSP with MIMD parallelism
+  oracle.dist[n][n] ← zeros
+  PARALLEL FOR s = 0 to n-1 (schedule: dynamic):
+    oracle.dist[s][] ← BFS(G, s)     // thread-local queue
+    oracle.sumDist[s] ← Σ oracle.dist[s][v]
+    CC(s) ← (n-1) / oracle.sumDist[s]
+  
+  // Dynamic update (edge insertions only)
+  FOR each edge insertion (u, v) in batch:
+    // Step 1: Identify affected sources
+    affected ← { s : |dist[s][u] - dist[s][v]| > 1 }
+    
+    // Step 2: Add edge to graph
+    G.addEdge(u, v)
+    
+    // Step 3: Re-BFS from affected sources (MIMD parallel)
+    PARALLEL FOR s in affected (schedule: dynamic):
+      oracle.bfsFrom(G, s)            // thread-local queue
+  
+  RETURN CC[]
+
+Complexity: Initial O(V²/T), Update O(|affected| × (V+E) / T)
+Parallelism: MIMD — initial APSP parallel, re-BFS parallel
+
+================================================================
+FILE 08: Novel BCC-Confined Vectorized CC (Sariyüce + Shukla)
+================================================================
+
+ALGORITHM BCVC (BCC-Confined Vectorized Closeness Centrality):
+
+INPUT: Graph G = (V, E)
+
+PHASE 1A — BCC DECOMPOSITION (Tarjan):
+  Find all BCCs and articulation points
+  Assign each node to ONE "home BCC" (first BCC containing it)
+
+PHASE 1B — BLOCK-CUT TREE:
+  BCT: one node per BCC, one node per articulation point
+  Edges: BCC_node ↔ Art_node if art belongs to that BCC
+
+PHASE 2 — BCC-LOCAL BITWISE SpMM (parallel across BCCs):
+  PARALLEL FOR each BCC b (schedule: dynamic):
+    Build local adjacency (edges within b only)
+    Re-index nodes 0..K-1 (local IDs)
+    home_count[b] ← K - |art points in b|
+    
+    // Bitwise multi-source BFS (64 sources per batch)
+    FOR s_base = 0 to K-1 step 64:
+      frontier[u] ← bitmask of sources that include u
+      WHILE frontier has nonzero entry:
+        level++
+        nextF[u] ← OR over neighbors: frontier[neighbor]   ← SpMM
+        new[u]   ← nextF[u] & ~visited[u]
+        intra_sum[u] += popcount(new[u]) × level
+    
+    // BFS from each art point
+    FOR each art point a in b:
+      d[] ← BFS_local(b, a)
+      dist_to_art[v][a] ← d[v] for all v in b
+    
+    // Precompute art_home_sum
+    FOR each art a in b:
+      art_home_sum[a] ← Σ dist_to_art[v][a] for HOME v (non-art) in b
+
+PHASE 3 — CROSS-BCC DISTANCE VIA DFS ON BCT:
+  FOR each BCC b:
+    FOR each art point a_i of b:
+      // DFS on BCT from a_i, avoiding b
+      (ext_cnt[a_i], ext_dist[a_i]) ← DFS_CROSS(a_i, b):
+        FOR each BCC b' reached through a_entry:
+          ext_cnt += home_count[b']
+          ext_dist += art_home_sum[b'][a_entry_index]
+          FOR each other art a_exit in b' (a_exit ≠ a_entry):
+            bridge ← dist_within_b'(a_entry, a_exit)
+            ext_cnt += 1          // the art point itself
+            ext_dist += bridge
+            (rc, rd) ← DFS_CROSS(a_exit, b')  // recurse
+            ext_cnt += rc
+            ext_dist += rd + bridge × rc
+
+PHASE 4 — ASSEMBLE:
+  PARALLEL FOR each node v in home BCC b, local id lv:
+    D(v) ← intra_sum[lv]
+    FOR each art point a of b:
+      D(v) += dist_to_art[lv][a] × ext_cnt[a] + ext_dist[a]
+    reachable ← min(K + Σ ext_cnt[a] - 1, n-1)
+    CC(v) ← reachable / D(v)
+
+DYNAMIC EDGE INSERTION:
+  Add edges to G
+  Full BCC redecompose (O(V+E)) — BCCs may merge
+  Re-run Phases 1-4
+
+Complexity: Time O(Σ K_b² / 64 + BCT_size), Space O(Σ K_b × A_b)
+Parallelism: MIMD — parallel across BCCs (Phase 2) and nodes (Phase 4)
+Novelty: Vectorization confined to BCC boundaries — neither paper does this.

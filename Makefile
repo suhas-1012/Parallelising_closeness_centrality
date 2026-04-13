@@ -4,9 +4,10 @@ OMPFLAGS = -fopenmp
 
 SEQ_TARGETS = 01_seq_naive_bfs 02_seq_multisource_bfs 03_seq_bcc_reduced
 PAR_TARGETS = 04_par_simple_mimd 05_par_mimd_msbfs 06_par_level_sync
-DYN_TARGETS = 07_dynamic_shukla 08_vdbcc_improved
+DYN_TARGETS = 07_dynamic_shukla
+NOVEL_TARGETS = 08_novel_bcc_spmm
 
-all: $(SEQ_TARGETS) $(PAR_TARGETS) $(DYN_TARGETS)
+all: $(SEQ_TARGETS) $(PAR_TARGETS) $(DYN_TARGETS) $(NOVEL_TARGETS)
 
 01_seq_naive_bfs: 01_seq_naive_bfs.cpp
 	$(CXX) $(CFLAGS) -o $@ $<
@@ -27,13 +28,13 @@ all: $(SEQ_TARGETS) $(PAR_TARGETS) $(DYN_TARGETS)
 	$(CXX) $(CFLAGS) $(OMPFLAGS) -o $@ $<
 
 07_dynamic_shukla: 07_dynamic_shukla.cpp
-	$(CXX) $(CFLAGS) -o $@ $<
+	$(CXX) $(CFLAGS) $(OMPFLAGS) -o $@ $<
 
-08_vdbcc_improved: 08_vdbcc_improved.cpp
+08_novel_bcc_spmm: 08_novel_bcc_spmm.cpp
 	$(CXX) $(CFLAGS) $(OMPFLAGS) -o $@ $<
 
 clean:
-	rm -f $(SEQ_TARGETS) $(PAR_TARGETS) $(DYN_TARGETS)
+	rm -f $(SEQ_TARGETS) $(PAR_TARGETS) $(DYN_TARGETS) $(NOVEL_TARGETS)
 
 run_all: all
 	@echo "========================================="
@@ -62,18 +63,18 @@ run_all: all
 	@./05_par_mimd_msbfs
 	@echo ""
 	@echo "========================================="
-	@echo "06: Parallel Level-Synchronous"
+	@echo "06: Parallel Level-Sync Pull-Based"
 	@echo "========================================="
 	@./06_par_level_sync
 	@echo ""
 	@echo "========================================="
-	@echo "07: Dynamic (Shukla-style)"
+	@echo "07: Dynamic (Shukla-style, MIMD)"
 	@echo "========================================="
 	@./07_dynamic_shukla
 	@echo ""
 	@echo "========================================="
-	@echo "08: VDBCC Improved"
+	@echo "08: Novel BCC-SpMM Hybrid (Dynamic)"
 	@echo "========================================="
-	@./08_vdbcc_improved
+	@./08_novel_bcc_spmm
 
 .PHONY: all clean run_all

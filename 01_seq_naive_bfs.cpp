@@ -1,3 +1,15 @@
+/*
+ * 01_seq_naive_bfs.cpp
+ * --------------------
+ * Sequential Naive BFS Closeness Centrality
+ *
+ * Algorithm: For each source node s, run a standard BFS from s.
+ *            Sum all shortest-path distances to compute CC(s) = (n-1) / Σ d(s,u).
+ *
+ * Parallelism: NONE (baseline sequential implementation)
+ * Complexity:  Time O(V × (V + E)),  Space O(V)
+ */
+
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -44,6 +56,13 @@ struct Graph {
     }
 };
 
+/*
+ * closeness_centrality:
+ *   For each source s = 0..n-1:
+ *     BFS from s → compute dist[v] for all v
+ *     totalDist = Σ dist[v]
+ *     CC(s) = (n-1) / totalDist
+ */
 vector<double> closeness_centrality(const Graph& g) {
     int n = g.n;
     vector<double> cc(n, 0.0);
@@ -54,7 +73,6 @@ vector<double> closeness_centrality(const Graph& g) {
         dist[s] = 0;
         q.push(s);
         long long totalDist = 0;
-        int reachable = 0;
 
         while (!q.empty()) {
             int u = q.front(); q.pop();
@@ -62,12 +80,11 @@ vector<double> closeness_centrality(const Graph& g) {
                 if (dist[v] == -1) {
                     dist[v] = dist[u] + 1;
                     totalDist += dist[v];
-                    reachable++;
                     q.push(v);
                 }
             }
         }
-        if (totalDist > 0) cc[s] = (double)reachable / (double)totalDist;
+        if (totalDist > 0) cc[s] = (double)(n - 1) / (double)totalDist;
     }
     return cc;
 }

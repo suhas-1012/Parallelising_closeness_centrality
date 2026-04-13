@@ -1,3 +1,19 @@
+/*
+ * 07_dynamic_shukla.cpp
+ * ---------------------
+ * Dynamic Closeness Centrality with Affected-Source Filtering (Shukla 2020 idea)
+ *
+ * Algorithm: Maintain a full distance oracle.  When edges are inserted in
+ *            batches, identify only the "affected" source nodes whose shortest
+ *            paths may have changed, and re-BFS only from those sources.
+ *            Unaffected sources keep their old distances.
+ *            CC(v) = (n-1) / Σ d(v,u)
+ *
+ * Parallelism: MIMD — OpenMP parallel for on initial APSP and on re-BFS
+ *              of affected sources.  Thread-local BFS queues and dist arrays.
+ * Complexity:  Initial O(V × (V+E) / T),  Update O(affected × (V+E) / T)
+ */
+
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -9,6 +25,7 @@
 #include <set>
 #include <cstdint>
 #include <cmath>
+#include <omp.h>
 
 using namespace std;
 
@@ -66,27 +83,41 @@ struct DistanceOracle {
     vector<double> sumDist;
     vector<double> cc;
 
+    /*
+     * Build initial distance oracle: BFS from every source.
+     * Parallelized with OpenMP — each thread has its own BFS queue.
+     */
     DistanceOracle(const Graph& g) : n(g.n), dist(n, vector<int>(n, -1)),
                                       sumDist(n, 0.0), cc(n, 0.0) {
-        for (int s = 0; s < n; s++) {
-            dist[s][s] = 0;
-            queue<int> q;
-            q.push(s);
-            while (!q.empty()) {
-                int u = q.front(); q.pop();
-                for (int v : g.adj[u]) {
-                    if (dist[s][v] == -1) {
-                        dist[s][v] = dist[s][u] + 1;
-                        q.push(v);
+        #pragma omp parallel
+        {
+            queue<int> q;  // thread-local queue
+
+            #pragma omp for schedule(dynamic, 1)
+            for (int s = 0; s < n; s++) {
+                dist[s][s] = 0;
+                q.push(s);
+                while (!q.empty()) {
+                    int u = q.front(); q.pop();
+                    for (int v : g.adj[u]) {
+                        if (dist[s][v] == -1) {
+                            dist[s][v] = dist[s][u] + 1;
+                            q.push(v);
+                        }
                     }
                 }
+                double sd = 0;
+                for (int v = 0; v < n; v++)
+                    if (dist[s][v] > 0) sd += dist[s][v];
+                sumDist[s] = sd;
+                if (sd > 0) cc[s] = (double)(n-1) / sd;
             }
-            for (int v = 0; v < n; v++)
-                if (dist[s][v] > 0) sumDist[s] += dist[s][v];
-            if (sumDist[s] > 0) cc[s] = (double)(n-1) / sumDist[s];
         }
     }
 
+    /*
+     * Re-BFS from a single source — used for affected source updates.
+     */
     void bfsFrom(const Graph& g, int s) {
         fill(dist[s].begin(), dist[s].end(), -1);
         dist[s][s] = 0;
@@ -114,39 +145,43 @@ struct EdgeUpdate {
     bool isInsertion;
 };
 
+/*
+ * dynamicUpdate:
+ *   1. For each edge insertion, identify sources whose shortest paths
+ *      may change: if |dist[s][u] - dist[s][v]| > 1, dist may decrease.
+ *   2. Apply edge updates to the graph.
+ *   3. Re-BFS only from affected sources (parallelized with OpenMP MIMD).
+ */
 int dynamicUpdate(Graph& g, DistanceOracle& oracle, const vector<EdgeUpdate>& batch) {
     int n = g.n;
-    vector<bool> affected(n, false);
-    int affectedCount = 0;
+    int totalAffected = 0;
 
+    // Process each edge insertion individually to maintain oracle consistency
     for (auto& e : batch) {
-        if (e.isInsertion) {
-            for (int s = 0; s < n; s++) {
-                if (abs(oracle.dist[s][e.u] - oracle.dist[s][e.v]) > 1) {
-                    affected[s] = true;
-                }
-            }
-            g.addEdge(e.u, e.v);
-        } else {
-            g.removeEdge(e.u, e.v);
-            for (int s = 0; s < n; s++) {
-                int du = oracle.dist[s][e.u];
-                int dv = oracle.dist[s][e.v];
-                if (du >= 0 && dv >= 0 && abs(du - dv) == 1) {
-                    affected[s] = true;
-                }
+        if (!e.isInsertion) continue;
+
+        // Step 1: Identify affected sources using current (consistent) oracle
+        vector<int> affectedList;
+        for (int s = 0; s < n; s++) {
+            if (oracle.dist[s][e.u] >= 0 && oracle.dist[s][e.v] >= 0 &&
+                abs(oracle.dist[s][e.u] - oracle.dist[s][e.v]) > 1) {
+                affectedList.push_back(s);
             }
         }
-    }
 
-    for (int s = 0; s < n; s++) {
-        if (affected[s]) {
-            oracle.bfsFrom(g, s);
-            affectedCount++;
+        // Step 2: Add edge to graph
+        g.addEdge(e.u, e.v);
+
+        // Step 3: Re-BFS from affected sources (MIMD parallel)
+        #pragma omp parallel for schedule(dynamic, 1)
+        for (int i = 0; i < (int)affectedList.size(); i++) {
+            oracle.bfsFrom(g, affectedList[i]);
         }
+        totalAffected += (int)affectedList.size();
     }
 
-    return affectedCount;
+
+    return totalAffected;
 }
 
 int main(int argc, char* argv[]) {
@@ -154,7 +189,9 @@ int main(int argc, char* argv[]) {
     if (argc > 1) g = Graph::readFromFile(argv[1]);
     else g = Graph::generateRandom(1000, 4000);
 
-    cout << "Method: Dynamic CC (Shukla-style affected source filtering)" << endl;
+    int nThreads = omp_get_max_threads();
+    cout << "Method: Dynamic CC (Shukla-style affected source filtering, MIMD parallel)" << endl;
+    cout << "Threads: " << nThreads << endl;
     cout << "Graph: " << g.n << " nodes" << endl;
 
     auto t0 = chrono::high_resolution_clock::now();

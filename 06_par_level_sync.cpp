@@ -1,3 +1,24 @@
+/*
+ * 06_par_level_sync.cpp
+ * ---------------------
+ * Parallel Level-Synchronous Pull-Based Multi-Source BFS
+ *
+ * Algorithm: Multi-source BFS with 64-bit packing, but parallelized
+ *            at each BFS level using a PULL (bottom-up) approach.
+ *            Instead of frontier nodes pushing bits to their neighbors
+ *            (which causes write conflicts → needs atomics),
+ *            each unvisited target node PULLS bits from its neighbors.
+ *            Since each thread writes to its own target node v, there are
+ *            no write conflicts and no atomics/locks needed.
+ *
+ *            This is fine-grained level-synchronous MIMD: all threads
+ *            cooperate on the SAME BFS level, with a barrier between levels.
+ *            CC(v) = (n-1) / Σ d(v,u)
+ *
+ * Parallelism: MIMD — level-synchronous with pull direction (lock-free)
+ * Complexity:  Time O(diameter × E / T),  Space O(V)
+ */
+
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -53,17 +74,26 @@ vector<double> naive_cc(const Graph& g) {
         vector<int> dist(n, -1);
         queue<int> q;
         dist[s] = 0; q.push(s);
-        long long td = 0; int reach = 0;
+        long long td = 0;
         while (!q.empty()) {
             int u = q.front(); q.pop();
             for (int v : g.adj[u])
-                if (dist[v] == -1) { dist[v] = dist[u]+1; td += dist[v]; reach++; q.push(v); }
+                if (dist[v] == -1) { dist[v] = dist[u]+1; td += dist[v]; q.push(v); }
         }
-        if (td > 0) cc[s] = (double)reach / td;
+        if (td > 0) cc[s] = (double)(n - 1) / td;
     }
     return cc;
 }
 
+/*
+ * parallel_levelsync_cc:
+ *   Multi-source BFS with 64-bit packing.
+ *   Each BFS level is parallelized across threads using PULL direction:
+ *     - Each thread processes a set of target nodes v
+ *     - For each v, it reads (pulls) frontier bits from all neighbors
+ *     - Each thread writes ONLY to its own v → no write conflicts, no atomics
+ *     - Barrier between levels ensures correctness
+ */
 vector<double> parallel_levelsync_cc(const Graph& g, int nThreads) {
     int n = g.n;
     vector<double> sumDist(n, 0.0);
@@ -87,25 +117,27 @@ vector<double> parallel_levelsync_cc(const Graph& g, int nThreads) {
 
         while (active) {
             level++;
-            fill(nextF.begin(), nextF.end(), 0ULL);
             active = false;
 
-            #pragma omp parallel for num_threads(nThreads) schedule(dynamic, 64)
-            for (int u = 0; u < n; u++) {
-                if (frontier[u] == 0ULL) continue;
-                for (int v : g.adj[u]) {
-                    #pragma omp atomic
-                    nextF[v] |= frontier[u];
-                }
-            }
-
-            #pragma omp parallel for num_threads(nThreads) schedule(static) reduction(||:active)
+            /*
+             * PULL direction: each thread processes target nodes v.
+             * For each v, pull frontier bits from neighbors (reads only).
+             * Write to nextF[v] — each v is processed by exactly one thread.
+             * No write conflicts → no atomics needed.
+             */
+            #pragma omp parallel for num_threads(nThreads) schedule(dynamic, 64) reduction(||:active)
             for (int v = 0; v < n; v++) {
-                nextF[v] &= ~visited[v];
-                if (nextF[v] != 0ULL) {
+                uint64_t bits = 0ULL;
+                for (int u : g.adj[v]) {
+                    bits |= frontier[u];   // PULL: read from neighbor's frontier
+                }
+                bits &= ~visited[v];       // mask already-visited sources
+                nextF[v] = bits;
+
+                if (bits != 0ULL) {
                     active = true;
-                    visited[v] |= nextF[v];
-                    sumDist[v] += (double)__builtin_popcountll(nextF[v]) * level;
+                    visited[v] |= bits;
+                    sumDist[v] += (double)__builtin_popcountll(bits) * level;
                 }
             }
 
@@ -126,7 +158,7 @@ int main(int argc, char* argv[]) {
     else g = Graph::generateRandom(2000, 8000);
     if (argc > 2) nThreads = atoi(argv[2]);
 
-    cout << "Method: Parallel Level-Synchronous BFS" << endl;
+    cout << "Method: Parallel Level-Synchronous Pull-Based BFS" << endl;
     cout << "Threads: " << nThreads << endl;
     cout << "Graph: " << g.n << " nodes" << endl;
 
