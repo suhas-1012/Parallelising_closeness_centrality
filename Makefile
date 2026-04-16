@@ -5,7 +5,7 @@ OMPFLAGS = -fopenmp
 SEQ_TARGETS = 01_seq_naive_bfs 02_seq_multisource_bfs 03_seq_bcc_reduced
 PAR_TARGETS = 04_par_simple_mimd 05_par_mimd_msbfs 06_par_level_sync
 DYN_TARGETS = 07_dynamic_shukla
-NOVEL_TARGETS = 08_novel_bcc_spmm
+NOVEL_TARGETS = 08_novel_bcc_spmm 09_novel_vdbcc
 
 all: $(SEQ_TARGETS) $(PAR_TARGETS) $(DYN_TARGETS) $(NOVEL_TARGETS)
 
@@ -33,6 +33,9 @@ all: $(SEQ_TARGETS) $(PAR_TARGETS) $(DYN_TARGETS) $(NOVEL_TARGETS)
 08_novel_bcc_spmm: 08_novel_bcc_spmm.cpp
 	$(CXX) $(CFLAGS) $(OMPFLAGS) -o $@ $<
 
+09_novel_vdbcc: 09_novel_vdbcc.cpp
+	$(CXX) $(CFLAGS) $(OMPFLAGS) -o $@ $<		
+	
 clean:
 	rm -f $(SEQ_TARGETS) $(PAR_TARGETS) $(DYN_TARGETS) $(NOVEL_TARGETS)
 
@@ -76,5 +79,9 @@ run_all: all
 	@echo "08: Novel BCC-SpMM Hybrid (Dynamic)"
 	@echo "========================================="
 	@./08_novel_bcc_spmm
+	@echo ""	@echo "========================================="
+	@echo "09: Novel Vectorized Dynamic BCC Closeness Centrality"
+	@echo "========================================="
+	@./09_novel_vdbcc		
 
 .PHONY: all clean run_all

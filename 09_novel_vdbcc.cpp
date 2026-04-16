@@ -1,23 +1,20 @@
 /*
- * 08_novel_bcc_spmm.cpp
+ * 08_novel_bcc_spmm_sequential.cpp
  * ---------------------
  * BCC-Confined Vectorized Closeness Centrality with Dynamic Edge Insertion
  * Fusing Sariyüce 2014 (vectorized SpMM) + Shukla 2020 (BCC topology)
  *
  * Algorithm (BCVC — 4 phases):
- *   Phase 1A: Tarjan BCC decomposition → find BCCs and articulation points
- *   Phase 1B: Build Block-Cut Tree (BCT)
- *   Phase 2:  BCC-confined bitwise multi-source BFS (64-bit SpMM) per BCC
- *             → intra_sum[v], dist_to_art[v][a], art_home_sum[b][a]
- *   Phase 3:  Cross-BCC distance via DFS on BCT (per-art subtree routing)
- *   Phase 4:  Assemble CC(v) = (n-1) / (intra_sum + cross_sum)
- *   Dynamic:  Edge insertion → full BCC redecompose + selective SpMM recompute
+ * Phase 1A: Tarjan BCC decomposition → find BCCs and articulation points
+ * Phase 1B: Build Block-Cut Tree (BCT)
+ * Phase 2:  BCC-confined bitwise multi-source BFS (64-bit SpMM) per BCC
+ * → intra_sum[v], dist_to_art[v][a], art_home_sum[b][a]
+ * Phase 3:  Cross-BCC distance via DFS on BCT (per-art subtree routing)
+ * Phase 4:  Assemble CC(v) = (n-1) / (intra_sum + cross_sum)
+ * Dynamic:  Edge insertion → full BCC redecompose + selective SpMM recompute
  *
- * Parallelism: MIMD — OpenMP parallel for across BCCs (Phase 2) and nodes (Phase 4)
+ * Parallelism: Sequential (Single-threaded) version.
  * Complexity:  Time O(Σ K_b² / 64 + BCT),  Space O(Σ K_b × A_b)
- *
- * Novelty: Neither paper combines vectorization within BCC-confined search spaces.
- *          This is the intersection: search space reduction + vectorized processing.
  */
 
 #include <iostream>
@@ -32,7 +29,6 @@
 #include <cstdint>
 #include <cmath>
 #include <cstdio>
-#include <omp.h>
 
 using namespace std;
 
@@ -211,14 +207,13 @@ static vector<int> bfs_local(const LocalBCC& lb, int src) {
     return dist;
 }
 
-/* ───────────────── Phase 2: BCC-Confined Bitwise SpMM ───────────────── */
+/* ───────────────── Phase 2: BCC-Confined Bitwise SpMM (Sequential) ───────────────── */
 void phase2_bcc_spmm(const Graph& g, const BCCDecomposition& bcc,
                      vector<LocalBCC>& lccs) {
 
     int nb = bcc.num_bccs();
     lccs.resize(nb);
 
-    #pragma omp parallel for schedule(dynamic)
     for (int b = 0; b < nb; b++) {
 
         LocalBCC& lb = lccs[b];
@@ -281,32 +276,15 @@ void phase2_bcc_spmm(const Graph& g, const BCCDecomposition& bcc,
                 fill(nextF.begin(), nextF.end(), 0ULL);
 
                 if (!use_pull) {
-
-                    // PUSH (parallel, no race via local buffers)
-                    vector<vector<uint64_t>> thread_local_next(omp_get_max_threads(),
-                                                               vector<uint64_t>(lb.K, 0));
-
-                    #pragma omp parallel
-                    {
-                        int tid = omp_get_thread_num();
-                        auto& local = thread_local_next[tid];
-
-                        #pragma omp for schedule(dynamic)
-                        for (int u = 0; u < lb.K; u++) {
-                            if (!frontier[u]) continue;
-                            for (int v : lb.ladj[u])
-                                local[v] |= frontier[u];
+                    // PUSH (sequential, direct write without race conditions)
+                    for (int u = 0; u < lb.K; u++) {
+                        if (!frontier[u]) continue;
+                        for (int v : lb.ladj[u]) {
+                            nextF[v] |= frontier[u];
                         }
                     }
-
-                    for (auto& local : thread_local_next)
-                        for (int i = 0; i < lb.K; i++)
-                            nextF[i] |= local[i];
-
                 } else {
-
-                    // PULL (safe parallel)
-                    #pragma omp parallel for schedule(dynamic)
+                    // PULL (sequential)
                     for (int v = 0; v < lb.K; v++) {
                         uint64_t bits = 0;
                         for (int u : lb.ladj[v])
@@ -315,9 +293,7 @@ void phase2_bcc_spmm(const Graph& g, const BCCDecomposition& bcc,
                     }
                 }
 
-                #pragma omp parallel for reduction(||:active)
                 for (int i = 0; i < lb.K; i++) {
-
                     uint64_t nw = nextF[i] & ~visited[i];
 
                     if (nw) {
@@ -368,14 +344,6 @@ void phase2_bcc_spmm(const Graph& g, const BCCDecomposition& bcc,
     }
 }
 /* ───────────────── Phase 3: Cross-BCC DFS on BCT ───────────────── */
-/*
- * For each art point of a BCC, compute:
- *   ext_cnt[a]  = number of external nodes reachable through art a
- *   ext_dist[a] = sum of distances from art a to all those external nodes
- *
- * DFS on BCT from art node, away from home BCC.
- * Each external node is counted exactly once (BCT is a tree → no overlap).
- */
 struct CrossBCCResult {
     long long ext_cnt;
     long long ext_dist;
@@ -425,7 +393,7 @@ CrossBCCResult dfs_cross(int bct_art, int from_bct_bcc,
     return {cnt, dist};
 }
 
-/* ────── Phase 4: Assemble CC ────── */
+/* ────── Phase 4: Assemble CC (Sequential) ────── */
 void phase4_assemble(const Graph& g, const BCCDecomposition& bcc,
                      const vector<LocalBCC>& lccs,
                      const BCT& bct, vector<double>& cc) {
@@ -460,7 +428,6 @@ void phase4_assemble(const Graph& g, const BCCDecomposition& bcc,
     }
 
     // Assemble final CC values
-    #pragma omp parallel for schedule(dynamic, 32)
     for (int v = 0; v < n; v++) {
         int b = home_bcc[v];
         if (b < 0) continue;
@@ -542,16 +509,14 @@ void baseline_cc(const Graph& g, vector<double>& cc) {
 int main(int argc, char* argv[]) {
     int n       = (argc > 1) ? atoi(argv[1]) : 500;
     int seed    = (argc > 2) ? atoi(argv[2]) : 42;
-    int threads = (argc > 3) ? atoi(argv[3]) : 4;
-    omp_set_num_threads(threads);
 
     Graph g = Graph::generateRandom(n, seed);
 
     printf("==============================================\n");
     printf("BCC-Confined Vectorized Closeness Centrality\n");
-    printf("Sariyuce 2014 + Shukla 2020 -- Novel MIMD\n");
+    printf("Sariyuce 2014 + Shukla 2020 -- Sequential\n");
     printf("==============================================\n");
-    printf("n=%d  m=%d  threads=%d\n\n", n, g.m, threads);
+    printf("n=%d  m=%d  threads=1 (Sequential)\n\n", n, g.m);
 
     // Phase 1A: BCC decomposition
     auto t0 = chrono::high_resolution_clock::now();
@@ -574,7 +539,7 @@ int main(int argc, char* argv[]) {
     vector<LocalBCC> lccs;
     phase2_bcc_spmm(g, bcc, lccs);
     auto t3 = chrono::high_resolution_clock::now();
-    printf("[Phase 2]  BCC-SpMM (parallel): %.2f ms\n",
+    printf("[Phase 2]  BCC-SpMM (seq):      %.2f ms\n",
            chrono::duration<double,milli>(t3-t2).count());
 
     // Phase 3+4: Cross-BCC DFS + assemble
