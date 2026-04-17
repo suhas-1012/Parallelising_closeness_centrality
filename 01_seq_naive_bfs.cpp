@@ -1,15 +1,3 @@
-/*
- * 01_seq_naive_bfs.cpp
- * --------------------
- * Sequential Naive BFS Closeness Centrality
- *
- * Algorithm: For each source node s, run a standard BFS from s.
- *            Sum all shortest-path distances to compute CC(s) = (n-1) / Σ d(s,u).
- *
- * Parallelism: NONE (baseline sequential implementation)
- * Complexity:  Time O(V × (V + E)),  Space O(V)
- */
-
 #include <iostream>
 #include <fstream>
 #include <vector>

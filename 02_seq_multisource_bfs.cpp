@@ -1,19 +1,3 @@
-/*
- * 02_seq_multisource_bfs.cpp
- * --------------------------
- * Sequential Multi-Source BFS using 64-bit Bit-Parallelism (Sariyüce 2014 idea)
- *
- * Algorithm: Pack 64 BFS sources into a single uint64_t word.
- *            frontier[u] is a bitmask of which sources' frontiers include u.
- *            Each level:  nextF[v] |= frontier[u]  for every edge (u,v)  — OR-semiring SpMM
- *                         new[v]   = nextF[v] & ~visited[v]
- *                         sumDist[v] += popcount(new[v]) × level
- *            CC(v) = (n-1) / sumDist[v]
- *
- * Parallelism: NONE (sequential, but uses data-level bit-parallelism within a word)
- * Complexity:  Time O(V × E / 64),  Space O(V)
- */
-
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -79,12 +63,7 @@ vector<double> naive_cc(const Graph& g) {
     return cc;
 }
 
-/*
- * multisource_bfs_cc:
- *   Process 64 BFS sources per batch.
- *   frontier[u] = bitmask of which sources have u on their frontier.
- *   Each level: spread frontier via OR, mask visited, sum distances via popcount.
- */
+
 vector<double> multisource_bfs_cc(const Graph& g) {
     int n = g.n;
     vector<double> sumDist(n, 0.0);

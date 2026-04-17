@@ -1,17 +1,3 @@
-/*
- * 04_par_simple_mimd.cpp
- * ----------------------
- * Parallel MIMD Naive BFS — one thread per source node
- *
- * Algorithm: Each OpenMP thread independently picks a source node and runs
- *            a full BFS from that source.  No shared state between threads
- *            (each thread has its own dist[] and queue).  Pure MIMD.
- *            CC(v) = (n-1) / Σ d(v,u)
- *
- * Parallelism: MIMD — OpenMP parallel for with dynamic scheduling
- * Complexity:  Time O(V × (V + E) / T),  Space O(V × T)
- */
-
 #include <iostream>
 #include <fstream>
 #include <vector>

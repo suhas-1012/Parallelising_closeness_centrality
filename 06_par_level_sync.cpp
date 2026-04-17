@@ -1,24 +1,3 @@
-/*
- * 06_par_level_sync.cpp
- * ---------------------
- * Parallel Level-Synchronous Pull-Based Multi-Source BFS
- *
- * Algorithm: Multi-source BFS with 64-bit packing, but parallelized
- *            at each BFS level using a PULL (bottom-up) approach.
- *            Instead of frontier nodes pushing bits to their neighbors
- *            (which causes write conflicts → needs atomics),
- *            each unvisited target node PULLS bits from its neighbors.
- *            Since each thread writes to its own target node v, there are
- *            no write conflicts and no atomics/locks needed.
- *
- *            This is fine-grained level-synchronous MIMD: all threads
- *            cooperate on the SAME BFS level, with a barrier between levels.
- *            CC(v) = (n-1) / Σ d(v,u)
- *
- * Parallelism: MIMD — level-synchronous with pull direction (lock-free)
- * Complexity:  Time O(diameter × E / T),  Space O(V)
- */
-
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -85,15 +64,6 @@ vector<double> naive_cc(const Graph& g) {
     return cc;
 }
 
-/*
- * parallel_levelsync_cc:
- *   Multi-source BFS with 64-bit packing.
- *   Each BFS level is parallelized across threads using PULL direction:
- *     - Each thread processes a set of target nodes v
- *     - For each v, it reads (pulls) frontier bits from all neighbors
- *     - Each thread writes ONLY to its own v → no write conflicts, no atomics
- *     - Barrier between levels ensures correctness
- */
 vector<double> parallel_levelsync_cc(const Graph& g, int nThreads) {
     int n = g.n;
     vector<double> sumDist(n, 0.0);
@@ -119,19 +89,13 @@ vector<double> parallel_levelsync_cc(const Graph& g, int nThreads) {
             level++;
             active = false;
 
-            /*
-             * PULL direction: each thread processes target nodes v.
-             * For each v, pull frontier bits from neighbors (reads only).
-             * Write to nextF[v] — each v is processed by exactly one thread.
-             * No write conflicts → no atomics needed.
-             */
             #pragma omp parallel for num_threads(nThreads) schedule(dynamic, 64) reduction(||:active)
             for (int v = 0; v < n; v++) {
                 uint64_t bits = 0ULL;
                 for (int u : g.adj[v]) {
-                    bits |= frontier[u];   // PULL: read from neighbor's frontier
+                    bits |= frontier[u];   //pull read from neighbor's frontier
                 }
-                bits &= ~visited[v];       // mask already-visited sources
+                bits &= ~visited[v];       //mask already-visited sources
                 nextF[v] = bits;
 
                 if (bits != 0ULL) {

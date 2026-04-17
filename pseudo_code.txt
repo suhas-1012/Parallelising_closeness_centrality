@@ -183,6 +183,10 @@ algorithm dynamiccc(g, t threads):
 complexity: initial o(v^2 / t), update o(|affected| * (v+e) / t)
 parallelism: mimd — initial apsp parallel, re-bfs parallel
 
+
+
+
+
 file 8: novel bcc-confined vectorized cc (sariyüce + shukla)
 
 algorithm bcvc (bcc-confined vectorized closeness centrality):

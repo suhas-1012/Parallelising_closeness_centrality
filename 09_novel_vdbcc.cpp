@@ -1,22 +1,3 @@
-/*
- * 08_novel_bcc_spmm_sequential.cpp
- * ---------------------
- * BCC-Confined Vectorized Closeness Centrality with Dynamic Edge Insertion
- * Fusing Sariyüce 2014 (vectorized SpMM) + Shukla 2020 (BCC topology)
- *
- * Algorithm (BCVC — 4 phases):
- * Phase 1A: Tarjan BCC decomposition → find BCCs and articulation points
- * Phase 1B: Build Block-Cut Tree (BCT)
- * Phase 2:  BCC-confined bitwise multi-source BFS (64-bit SpMM) per BCC
- * → intra_sum[v], dist_to_art[v][a], art_home_sum[b][a]
- * Phase 3:  Cross-BCC distance via DFS on BCT (per-art subtree routing)
- * Phase 4:  Assemble CC(v) = (n-1) / (intra_sum + cross_sum)
- * Dynamic:  Edge insertion → full BCC redecompose + selective SpMM recompute
- *
- * Parallelism: Sequential (Single-threaded) version.
- * Complexity:  Time O(Σ K_b² / 64 + BCT),  Space O(Σ K_b × A_b)
- */
-
 #include <iostream>
 #include <fstream>
 #include <vector>

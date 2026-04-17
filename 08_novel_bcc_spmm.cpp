@@ -1,25 +1,3 @@
-/*
- * 08_novel_bcc_spmm.cpp
- * ---------------------
- * BCC-Confined Vectorized Closeness Centrality with Dynamic Edge Insertion
- * Fusing Sariyüce 2014 (vectorized SpMM) + Shukla 2020 (BCC topology)
- *
- * Algorithm (BCVC — 4 phases):
- *   Phase 1A: Tarjan BCC decomposition → find BCCs and articulation points
- *   Phase 1B: Build Block-Cut Tree (BCT)
- *   Phase 2:  BCC-confined bitwise multi-source BFS (64-bit SpMM) per BCC
- *             → intra_sum[v], dist_to_art[v][a], art_home_sum[b][a]
- *   Phase 3:  Cross-BCC distance via DFS on BCT (per-art subtree routing)
- *   Phase 4:  Assemble CC(v) = (n-1) / (intra_sum + cross_sum)
- *   Dynamic:  Edge insertion → full BCC redecompose + selective SpMM recompute
- *
- * Parallelism: MIMD — OpenMP parallel for across BCCs (Phase 2) and nodes (Phase 4)
- * Complexity:  Time O(Σ K_b² / 64 + BCT),  Space O(Σ K_b × A_b)
- *
- * Novelty: Neither paper combines vectorization within BCC-confined search spaces.
- *          This is the intersection: search space reduction + vectorized processing.
- */
-
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -36,7 +14,7 @@
 
 using namespace std;
 
-/* ───────────────── Graph ───────────────── */
+//graph
 struct Graph {
     int n, m;
     vector<vector<int>> adj;
@@ -76,7 +54,7 @@ struct Graph {
     }
 };
 
-/* ───────────────── BCC Decomposition (Tarjan) ───────────────── */
+//Bcc decomposition using tarzan
 struct BCCDecomposition {
     int n, timer_cnt;
     vector<int>  disc, low, par;
@@ -144,10 +122,10 @@ struct BCCDecomposition {
     int num_bccs() const { return (int)bcc_nodes.size(); }
 };
 
-/* ───────────────── Block-Cut Tree ───────────────── */
+//block cut tree structure
 struct BCT {
     vector<vector<int>> adj;
-    vector<int> type;  // 0=bcc, 1=art
+    vector<int> type;  //0=bcc 1=art
     vector<int> id;
     vector<int> bcc_to_bct;
     unordered_map<int,int> art_to_bct;
@@ -178,27 +156,27 @@ struct BCT {
     }
 };
 
-/* ───────────────── Local BCC data ───────────────── */
+//local bcc structure
 struct LocalBCC {
     int K;
     vector<int> l2g;
     vector<int> g2l_vec;  // sized to graph n, -1 for non-members
     vector<vector<int>> ladj;
 
-    // Phase 2 results
+    //phase 2 results
     vector<long long> intra_sum;
     int num_arts;
     vector<int> art_local;
     vector<int> art_global;
     vector<vector<int>> dist_to_art;  // K × num_arts
 
-    // For cross-BCC routing
-    int home_count;                    // non-art nodes in this BCC
-    vector<long long> art_home_sum;    // [a] = Σ dist(art_a, v) for HOME v
-    set<int> art_local_set;            // for quick lookup
+    //for cross-BCC routing
+    int home_count;                    //non-art nodes in this BCC
+    vector<long long> art_home_sum;    //[a] = Σ dist(art_a, v) for HOME v
+    set<int> art_local_set;            //for quick lookup
 };
 
-/* BFS within a local BCC */
+//bfs within a local bcc
 static vector<int> bfs_local(const LocalBCC& lb, int src) {
     vector<int> dist(lb.K, -1);
     queue<int> q;
@@ -211,7 +189,7 @@ static vector<int> bfs_local(const LocalBCC& lb, int src) {
     return dist;
 }
 
-/* ───────────────── Phase 2: BCC-Confined Bitwise SpMM ───────────────── */
+//phase 2 bcc confined bitwise spmm
 void phase2_bcc_spmm(const Graph& g, const BCCDecomposition& bcc,
                      vector<LocalBCC>& lccs) {
 
@@ -282,7 +260,7 @@ void phase2_bcc_spmm(const Graph& g, const BCCDecomposition& bcc,
 
                 if (!use_pull) {
 
-                    // PUSH (parallel, no race via local buffers)
+                    //push parallel, no race via local buffers
                     vector<vector<uint64_t>> thread_local_next(omp_get_max_threads(),
                                                                vector<uint64_t>(lb.K, 0));
 
@@ -305,7 +283,7 @@ void phase2_bcc_spmm(const Graph& g, const BCCDecomposition& bcc,
 
                 } else {
 
-                    // PULL (safe parallel)
+                    //pull safe parallel
                     #pragma omp parallel for schedule(dynamic)
                     for (int v = 0; v < lb.K; v++) {
                         uint64_t bits = 0;
@@ -367,15 +345,9 @@ void phase2_bcc_spmm(const Graph& g, const BCCDecomposition& bcc,
         }
     }
 }
-/* ───────────────── Phase 3: Cross-BCC DFS on BCT ───────────────── */
-/*
- * For each art point of a BCC, compute:
- *   ext_cnt[a]  = number of external nodes reachable through art a
- *   ext_dist[a] = sum of distances from art a to all those external nodes
- *
- * DFS on BCT from art node, away from home BCC.
- * Each external node is counted exactly once (BCT is a tree → no overlap).
- */
+
+//phase 3 cross bcc dfs on bct
+
 struct CrossBCCResult {
     long long ext_cnt;
     long long ext_dist;
@@ -393,29 +365,23 @@ CrossBCCResult dfs_cross(int bct_art, int from_bct_bcc,
         const LocalBCC& lb = lccs[b_idx];
         int entry_local = lb.g2l_vec[art_global];
 
-        // Find entry art's index in this BCC's art list
         int entry_art_idx = -1;
         for (int a = 0; a < lb.num_arts; a++)
             if (lb.art_global[a] == art_global) { entry_art_idx = a; break; }
 
-        // Count home nodes of this BCC + distances from entry art
         cnt += lb.home_count;
         if (entry_art_idx >= 0)
             dist += lb.art_home_sum[entry_art_idx];
 
-        // Continue through other art points of this BCC
         for (int a = 0; a < lb.num_arts; a++) {
             if (lb.art_global[a] == art_global) continue;  // skip entry art
 
-            // Bridge distance: entry art → exit art within this BCC
             int bridge = lb.dist_to_art[entry_local][a];
             if (bridge < 0) continue;
 
-            // Count the exit art point itself (not in home BCC)
             cnt += 1;
             dist += bridge;
 
-            // Recurse into subtree beyond exit art
             int exit_bct_art = bct.art_to_bct.at(lb.art_global[a]);
             auto [rc, rd] = dfs_cross(exit_bct_art, bct_bcc, bct, lccs);
             cnt += rc;
@@ -425,14 +391,13 @@ CrossBCCResult dfs_cross(int bct_art, int from_bct_bcc,
     return {cnt, dist};
 }
 
-/* ────── Phase 4: Assemble CC ────── */
+//phase 4 assemble cc
 void phase4_assemble(const Graph& g, const BCCDecomposition& bcc,
                      const vector<LocalBCC>& lccs,
                      const BCT& bct, vector<double>& cc) {
     int n = g.n;
     cc.assign(n, 0.0);
 
-    // Map each node to its home BCC (first BCC containing it)
     vector<int> home_bcc(n, -1);
     vector<int> home_local(n, -1);
     for (int b = 0; b < (int)lccs.size(); b++)
@@ -444,8 +409,6 @@ void phase4_assemble(const Graph& g, const BCCDecomposition& bcc,
             }
         }
 
-    // Precompute ext_cnt and ext_dist for each art point of each BCC
-    // These are per-(BCC, art_index) pairs
     int nb = (int)lccs.size();
     vector<vector<CrossBCCResult>> bcc_ext(nb);
 
@@ -459,7 +422,6 @@ void phase4_assemble(const Graph& g, const BCCDecomposition& bcc,
         }
     }
 
-    // Assemble final CC values
     #pragma omp parallel for schedule(dynamic, 32)
     for (int v = 0; v < n; v++) {
         int b = home_bcc[v];
@@ -467,10 +429,8 @@ void phase4_assemble(const Graph& g, const BCCDecomposition& bcc,
         int lv = home_local[v];
         const LocalBCC& lb = lccs[b];
 
-        // Intra-BCC distance sum
         long long D = lb.intra_sum[lv];
 
-        // Cross-BCC contributions through each art point
         for (int a = 0; a < lb.num_arts; a++) {
             int d_v_a = lb.dist_to_art[lv][a];
             if (d_v_a < 0) continue;
@@ -478,12 +438,9 @@ void phase4_assemble(const Graph& g, const BCCDecomposition& bcc,
             D += (long long)d_v_a * bcc_ext[b][a].ext_cnt + bcc_ext[b][a].ext_dist;
         }
 
-        // Reachable count
         long long ext_total = 0;
         for (int a = 0; a < lb.num_arts; a++)
             ext_total += bcc_ext[b][a].ext_cnt;
-        // Art points of home BCC are already in intra_sum
-        // External nodes + home BCC nodes - 1 (exclude self)
         long long reachable = min((long long)(lb.K) + ext_total - 1, (long long)(n - 1));
 
         if (D > 0)
@@ -491,7 +448,7 @@ void phase4_assemble(const Graph& g, const BCCDecomposition& bcc,
     }
 }
 
-/* ────── Dynamic Edge Insertion Support ────── */
+//dynamic edge insertion support
 struct DynamicResult {
     double timeMs;
     int edgesAdded;
@@ -520,7 +477,7 @@ DynamicResult dynamicInsert(Graph& g, const vector<pair<int,int>>& edges,
     return {chrono::duration<double, milli>(t1 - t0).count(), (int)edges.size()};
 }
 
-/* ────── Baseline sequential BFS CC ────── */
+//baseline sequential BFS CC
 void baseline_cc(const Graph& g, vector<double>& cc) {
     int n = g.n;
     cc.assign(n, 0.0);
@@ -538,7 +495,7 @@ void baseline_cc(const Graph& g, vector<double>& cc) {
     }
 }
 
-/* ────── Main ────── */
+
 int main(int argc, char* argv[]) {
     int n       = (argc > 1) ? atoi(argv[1]) : 500;
     int seed    = (argc > 2) ? atoi(argv[2]) : 42;
@@ -553,7 +510,7 @@ int main(int argc, char* argv[]) {
     printf("==============================================\n");
     printf("n=%d  m=%d  threads=%d\n\n", n, g.m, threads);
 
-    // Phase 1A: BCC decomposition
+    //phase 1A: BCC decomposition
     auto t0 = chrono::high_resolution_clock::now();
     BCCDecomposition bcc(n);
     bcc.run(g);
@@ -563,21 +520,21 @@ int main(int argc, char* argv[]) {
     printf("[Phase 1A] BCC decomposition: %.2f ms  BCCs=%d  arts=%d\n",
            chrono::duration<double,milli>(t1-t0).count(), bcc.num_bccs(), num_arts);
 
-    // Phase 1B: BCT
+    //phase 1B: BCT
     BCT bct;
     bct.build(bcc);
     auto t2 = chrono::high_resolution_clock::now();
     printf("[Phase 1B] Block-Cut Tree:     %.2f ms  BCT nodes=%d\n",
            chrono::duration<double,milli>(t2-t1).count(), bct.size());
 
-    // Phase 2: BCC-confined SpMM
+    //phase 2: BCC-confined SpMM
     vector<LocalBCC> lccs;
     phase2_bcc_spmm(g, bcc, lccs);
     auto t3 = chrono::high_resolution_clock::now();
     printf("[Phase 2]  BCC-SpMM (parallel): %.2f ms\n",
            chrono::duration<double,milli>(t3-t2).count());
 
-    // Phase 3+4: Cross-BCC DFS + assemble
+    //phase 3+4: Cross-BCC DFS + assemble
     vector<double> my_cc;
     phase4_assemble(g, bcc, lccs, bct, my_cc);
     auto t4 = chrono::high_resolution_clock::now();
@@ -586,14 +543,13 @@ int main(int argc, char* argv[]) {
 
     double total_ms = chrono::duration<double,milli>(t4-t0).count();
 
-    // Baseline
+    //baseline
     auto tb0 = chrono::high_resolution_clock::now();
     vector<double> ref_cc;
     baseline_cc(g, ref_cc);
     auto tb1 = chrono::high_resolution_clock::now();
     double base_ms = chrono::duration<double,milli>(tb1-tb0).count();
 
-    // Validation
     double max_err = 0.0, avg_err = 0.0;
     for (int v = 0; v < n; v++) {
         double e = fabs(my_cc[v] - ref_cc[v]);
@@ -618,7 +574,6 @@ int main(int argc, char* argv[]) {
     printf("Sum K^2 across BCCs:    %lld (vs N^2=%lld, ratio=%.3f)\n",
            total_work, (long long)n*n, (double)total_work / (n*n));
 
-    // === Dynamic Updates (Edge Insertions Only) ===
     printf("\n=== Dynamic Edge Insertions ===\n");
     srand(123);
     for (int b = 0; b < 3; b++) {
@@ -631,7 +586,6 @@ int main(int argc, char* argv[]) {
 
         auto res = dynamicInsert(g, edges, my_cc);
 
-        // Validate against full recompute
         vector<double> check_cc;
         baseline_cc(g, check_cc);
         double err = 0;

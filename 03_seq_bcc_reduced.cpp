@@ -1,20 +1,3 @@
-/*
- * 03_seq_bcc_reduced.cpp
- * ----------------------
- * Sequential BCC Decomposition + R3/R4 Graph Reduction (Shukla 2020 idea)
- *
- * Algorithm: Decompose graph into BCCs using Tarjan's algorithm.
- *            Identify R3 (degree-3 in triangle) and R4 (degree-4 in 4-cycle) nodes.
- *            Skip BFS from redundant nodes, infer their distances from neighbors.
- *            CC(v) = (n-1) / Σ d(v,u)
- *
- * Parallelism: NONE (sequential)
- * Complexity:  Time O(V × (V + E)) worst case, reduced by redundant node count
- *
- * Note: R3/R4 reductions are effective on road networks and biological graphs;
- *       random test graphs may yield 0 reductions.
- */
-
 #include <iostream>
 #include <fstream>
 #include <vector>

@@ -1,19 +1,3 @@
-/*
- * 07_dynamic_shukla.cpp
- * ---------------------
- * Dynamic Closeness Centrality with Affected-Source Filtering (Shukla 2020 idea)
- *
- * Algorithm: Maintain a full distance oracle.  When edges are inserted in
- *            batches, identify only the "affected" source nodes whose shortest
- *            paths may have changed, and re-BFS only from those sources.
- *            Unaffected sources keep their old distances.
- *            CC(v) = (n-1) / Σ d(v,u)
- *
- * Parallelism: MIMD — OpenMP parallel for on initial APSP and on re-BFS
- *              of affected sources.  Thread-local BFS queues and dist arrays.
- * Complexity:  Initial O(V × (V+E) / T),  Update O(affected × (V+E) / T)
- */
-
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -83,15 +67,11 @@ struct DistanceOracle {
     vector<double> sumDist;
     vector<double> cc;
 
-    /*
-     * Build initial distance oracle: BFS from every source.
-     * Parallelized with OpenMP — each thread has its own BFS queue.
-     */
     DistanceOracle(const Graph& g) : n(g.n), dist(n, vector<int>(n, -1)),
                                       sumDist(n, 0.0), cc(n, 0.0) {
         #pragma omp parallel
         {
-            queue<int> q;  // thread-local queue
+            queue<int> q;  //thread-local queue
 
             #pragma omp for schedule(dynamic, 1)
             for (int s = 0; s < n; s++) {
@@ -114,10 +94,6 @@ struct DistanceOracle {
             }
         }
     }
-
-    /*
-     * Re-BFS from a single source — used for affected source updates.
-     */
     void bfsFrom(const Graph& g, int s) {
         fill(dist[s].begin(), dist[s].end(), -1);
         dist[s][s] = 0;
@@ -145,22 +121,14 @@ struct EdgeUpdate {
     bool isInsertion;
 };
 
-/*
- * dynamicUpdate:
- *   1. For each edge insertion, identify sources whose shortest paths
- *      may change: if |dist[s][u] - dist[s][v]| > 1, dist may decrease.
- *   2. Apply edge updates to the graph.
- *   3. Re-BFS only from affected sources (parallelized with OpenMP MIMD).
- */
 int dynamicUpdate(Graph& g, DistanceOracle& oracle, const vector<EdgeUpdate>& batch) {
     int n = g.n;
     int totalAffected = 0;
 
-    // Process each edge insertion individually to maintain oracle consistency
     for (auto& e : batch) {
         if (!e.isInsertion) continue;
 
-        // Step 1: Identify affected sources using current (consistent) oracle
+        // affected sources using current (consistent) oracle
         vector<int> affectedList;
         for (int s = 0; s < n; s++) {
             if (oracle.dist[s][e.u] >= 0 && oracle.dist[s][e.v] >= 0 &&
@@ -169,10 +137,9 @@ int dynamicUpdate(Graph& g, DistanceOracle& oracle, const vector<EdgeUpdate>& ba
             }
         }
 
-        // Step 2: Add edge to graph
         g.addEdge(e.u, e.v);
 
-        // Step 3: Re-BFS from affected sources (MIMD parallel)
+        //e-BFS from affected sources (MIMD parallel)
         #pragma omp parallel for schedule(dynamic, 1)
         for (int i = 0; i < (int)affectedList.size(); i++) {
             oracle.bfsFrom(g, affectedList[i]);
