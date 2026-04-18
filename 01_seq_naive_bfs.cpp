@@ -24,24 +24,6 @@ struct Graph {
         for (int i = 0; i < m; i++) { int u, v; fin >> u >> v; g.addEdge(u, v); }
         return g;
     }
-
-    static Graph generateRandom(int n, int m) {
-        Graph g(n);
-        srand(42);
-        for (int i = 1; i < n; i++) { int p = rand() % i; g.addEdge(i, p); }
-        set<pair<int,int>> ex;
-        for (int u = 0; u < n; u++)
-            for (int v : g.adj[u]) ex.insert({min(u,v), max(u,v)});
-        int added = n - 1;
-        while (added < m) {
-            int u = rand() % n, v = rand() % n;
-            if (u == v) continue;
-            auto e = make_pair(min(u,v), max(u,v));
-            if (ex.count(e)) continue;
-            ex.insert(e); g.addEdge(u, v); added++;
-        }
-        return g;
-    }
 };
 
 /*
@@ -79,8 +61,14 @@ vector<double> closeness_centrality(const Graph& g) {
 
 int main(int argc, char* argv[]) {
     Graph g;
-    if (argc > 1) g = Graph::readFromFile(argv[1]);
-    else g = Graph::generateRandom(2000, 8000);
+
+    if (argc > 1) {
+        g = Graph::readFromFile(argv[1]);
+    }
+    else {
+        std::cout << "Usage: " << argv[0] << " <graph_file>" << std::endl;
+        return 1;
+    }
 
     cout << "Method: Sequential Naive BFS" << endl;
     cout << "Formula: CC(v) = (n-1) / sum_u d(v,u)" << endl;
@@ -98,7 +86,11 @@ int main(int argc, char* argv[]) {
     sort(idx.begin(), idx.end(), [&](int a, int b) { return cc[a] > cc[b]; });
     cout << "Top 10:" << endl;
     for (int i = 0; i < min(10, g.n); i++)
-        cout << "  Node " << idx[i] << ": " << fixed << setprecision(6) << cc[idx[i]] << endl;
-
+        cout << "  Node " << idx[i] << ": " << fixed << setprecision(64) << cc[idx[i]] << endl;
+    ofstream values("a/1.csv");
+    for (int i = 0; i < g.n; i++)
+        values <<cc[i] << "\n";
+    ofstream csv("experiment.csv", ios::app);
+    csv<<"1"<<","<<ms<<"\n";
     return 0;
 }

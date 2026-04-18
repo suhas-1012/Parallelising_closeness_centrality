@@ -27,24 +27,6 @@ struct Graph {
         return g;
     }
 
-    static Graph generateRandom(int n, int m) {
-        Graph g(n);
-        srand(42);
-        for (int i = 1; i < n; i++) { int p = rand() % i; g.addEdge(i, p); }
-        set<pair<int,int>> ex;
-        for (int u = 0; u < n; u++)
-            for (int v : g.adj[u]) ex.insert({min(u,v), max(u,v)});
-        int added = n - 1;
-        while (added < m) {
-            int u = rand() % n, v = rand() % n;
-            if (u == v) continue;
-            auto e = make_pair(min(u,v), max(u,v));
-            if (ex.count(e)) continue;
-            ex.insert(e); g.addEdge(u, v); added++;
-        }
-        return g;
-    }
-
     bool hasEdge(int u, int v) const {
         for (int w : adj[u]) if (w == v) return true;
         return false;
@@ -242,50 +224,41 @@ vector<double> bcc_reduced_cc(const Graph& g) {
     return cc;
 }
 
-vector<double> naive_cc(const Graph& g) {
-    int n = g.n;
-    vector<double> cc(n, 0.0);
-    for (int s = 0; s < n; s++) {
-        vector<int> dist(n, -1);
-        queue<int> q;
-        dist[s] = 0; q.push(s);
-        long long td = 0; int reach = 0;
-        while (!q.empty()) {
-            int u = q.front(); q.pop();
-            for (int v : g.adj[u])
-                if (dist[v] == -1) { dist[v] = dist[u]+1; td += dist[v]; reach++; q.push(v); }
-        }
-        if (td > 0) cc[s] = (double)(n - 1) / td;
-    }
-    return cc;
-}
 
 int main(int argc, char* argv[]) {
     Graph g;
-    if (argc > 1) g = Graph::readFromFile(argv[1]);
-    else g = Graph::generateRandom(2000, 8000);
+    if (argc > 1) {
+        g = Graph::readFromFile(argv[1]);
+    }
+    else {
+        cout << "Usage: " << argv[0] << " <graph_file>" << endl;
+        return 1;
+    }
 
     cout << "Method: Sequential BCC + R3/R4 Graph Reduction" << endl;
     cout << "Formula: CC(v) = (n-1) / sum_u d(v,u)" << endl;
     cout << "Graph: " << g.n << " nodes" << endl;
 
     auto t0 = chrono::high_resolution_clock::now();
-    auto cc_naive = naive_cc(g);
-    auto t1 = chrono::high_resolution_clock::now();
-    double naive_ms = chrono::duration<double, milli>(t1 - t0).count();
-
-    t0 = chrono::high_resolution_clock::now();
     auto cc_bcc = bcc_reduced_cc(g);
-    t1 = chrono::high_resolution_clock::now();
+    auto t1 = chrono::high_resolution_clock::now();
     double bcc_ms = chrono::duration<double, milli>(t1 - t0).count();
 
-    double maxErr = 0;
-    for (int i = 0; i < g.n; i++) maxErr = max(maxErr, abs(cc_naive[i] - cc_bcc[i]));
-
-    cout << "Naive time: " << fixed << setprecision(1) << naive_ms << " ms" << endl;
     cout << "BCC-reduced time: " << fixed << setprecision(1) << bcc_ms << " ms" << endl;
     cout << "BFS calls saved: " << (int)(findR3(g).size() + findR4(g).size()) << " / " << g.n << endl;
-    cout << "Max error vs naive: " << scientific << setprecision(2) << maxErr << endl;
+
+    vector<int> idx(g.n);
+    iota(idx.begin(), idx.end(), 0);
+    sort(idx.begin(), idx.end(), [&](int a, int b) { return cc_bcc[a] > cc_bcc[b]; });
+    cout << "Top 10:" << endl;
+    for (int i = 0; i < min(10, g.n); i++)
+        cout << "  Node " << idx[i] << ": " << fixed << setprecision(64) << cc_bcc[idx[i]] << endl;
+    ofstream values("a/3.csv");
+    for (int i = 0; i < g.n; i++)
+        values << cc_bcc[i] << endl;
+    ofstream csv("experiment.csv", ios::app);
+    csv<<"3"<<","<<bcc_ms<<"\n";
+    csv.close();
 
     return 0;
 }

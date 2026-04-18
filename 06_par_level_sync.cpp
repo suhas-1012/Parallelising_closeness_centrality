@@ -26,43 +26,7 @@ struct Graph {
         for (int i = 0; i < m; i++) { int u, v; fin >> u >> v; g.addEdge(u, v); }
         return g;
     }
-
-    static Graph generateRandom(int n, int m) {
-        Graph g(n);
-        srand(42);
-        for (int i = 1; i < n; i++) { int p = rand() % i; g.addEdge(i, p); }
-        set<pair<int,int>> ex;
-        for (int u = 0; u < n; u++)
-            for (int v : g.adj[u]) ex.insert({min(u,v), max(u,v)});
-        int added = n - 1;
-        while (added < m) {
-            int u = rand() % n, v = rand() % n;
-            if (u == v) continue;
-            auto e = make_pair(min(u,v), max(u,v));
-            if (ex.count(e)) continue;
-            ex.insert(e); g.addEdge(u, v); added++;
-        }
-        return g;
-    }
 };
-
-vector<double> naive_cc(const Graph& g) {
-    int n = g.n;
-    vector<double> cc(n, 0.0);
-    for (int s = 0; s < n; s++) {
-        vector<int> dist(n, -1);
-        queue<int> q;
-        dist[s] = 0; q.push(s);
-        long long td = 0;
-        while (!q.empty()) {
-            int u = q.front(); q.pop();
-            for (int v : g.adj[u])
-                if (dist[v] == -1) { dist[v] = dist[u]+1; td += dist[v]; q.push(v); }
-        }
-        if (td > 0) cc[s] = (double)(n - 1) / td;
-    }
-    return cc;
-}
 
 vector<double> parallel_levelsync_cc(const Graph& g, int nThreads) {
     int n = g.n;
@@ -93,9 +57,9 @@ vector<double> parallel_levelsync_cc(const Graph& g, int nThreads) {
             for (int v = 0; v < n; v++) {
                 uint64_t bits = 0ULL;
                 for (int u : g.adj[v]) {
-                    bits |= frontier[u];   //pull read from neighbor's frontier
+                    bits |= frontier[u];
                 }
-                bits &= ~visited[v];       //mask already-visited sources
+                bits &= ~visited[v];
                 nextF[v] = bits;
 
                 if (bits != 0ULL) {
@@ -118,32 +82,38 @@ vector<double> parallel_levelsync_cc(const Graph& g, int nThreads) {
 int main(int argc, char* argv[]) {
     Graph g;
     int nThreads = omp_get_max_threads();
-    if (argc > 1) g = Graph::readFromFile(argv[1]);
-    else g = Graph::generateRandom(2000, 8000);
+    if (argc > 1) {
+        g = Graph::readFromFile(argv[1]);
+    }
+    else {
+        cout << "Usage: " << argv[0] << " <graph_file>" << endl;
+        return 1;
+    }
+
     if (argc > 2) nThreads = atoi(argv[2]);
+    omp_set_num_threads(nThreads);
 
     cout << "Method: Parallel Level-Synchronous Pull-Based BFS" << endl;
     cout << "Threads: " << nThreads << endl;
     cout << "Graph: " << g.n << " nodes" << endl;
 
     auto t0 = chrono::high_resolution_clock::now();
-    auto cc_seq = naive_cc(g);
-    auto t1 = chrono::high_resolution_clock::now();
-    double seq_ms = chrono::duration<double, milli>(t1 - t0).count();
-
-    t0 = chrono::high_resolution_clock::now();
     auto cc_par = parallel_levelsync_cc(g, nThreads);
-    t1 = chrono::high_resolution_clock::now();
+    auto t1 = chrono::high_resolution_clock::now();
     double par_ms = chrono::duration<double, milli>(t1 - t0).count();
 
-    double maxErr = 0;
-    for (int i = 0; i < g.n; i++) maxErr = max(maxErr, abs(cc_seq[i] - cc_par[i]));
-
-    cout << "Sequential time: " << fixed << setprecision(1) << seq_ms << " ms" << endl;
     cout << "LevelSync time:  " << fixed << setprecision(1) << par_ms << " ms" << endl;
-    cout << "Speedup: " << setprecision(2) << seq_ms / par_ms << "x" << endl;
-    cout << "Max error: " << scientific << setprecision(2) << maxErr;
-    cout << (maxErr < 1e-9 ? "  MATCH" : "  MISMATCH") << endl;
+    vector<int> idx(g.n);
+    iota(idx.begin(), idx.end(), 0);
+    sort(idx.begin(), idx.end(), [&](int a, int b) { return cc_par[a] > cc_par[b]; });
+    cout << "Top 10:" << endl;
+    for (int i = 0; i < min(10, g.n); i++)
+        cout << "  Node " << idx[i] << ": " << fixed << setprecision(64) << cc_par[idx[i]] << endl;
+    ofstream values("a/6.csv");
+    for (int i = 0; i < g.n; i++)
+        values << cc_par[i] << "\n";
+    ofstream csv("experiment.csv", ios::app);
+    csv<<"6"<<","<<par_ms<<"\n";
 
     return 0;
 }
