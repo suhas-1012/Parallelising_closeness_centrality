@@ -504,6 +504,7 @@ int main(int argc, char* argv[]) {
 
     Graph g = Graph::generateRandom(n, seed);
 
+    
     printf("==============================================\n");
     printf("BCC-Confined Vectorized Closeness Centrality\n");
     printf("Sariyuce 2014 + Shukla 2020 -- Novel MIMD\n");
