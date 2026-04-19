@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cmath>
 #include <cstdio>
+#include <iomanip>
 #include <omp.h>
 
 using namespace std;
@@ -25,32 +26,18 @@ struct Graph {
         adj[v].push_back(u);
         m++;
     }
+
+    static Graph readFromFile(const string& f) {
+        ifstream fin(f);
+        int n, m; fin >> n >> m;
+        Graph g(n);
+        for (int i = 0; i < m; i++) { int u, v; fin >> u >> v; g.addEdge(u, v); }
+        return g;
+    }
+
     bool hasEdge(int u, int v) const {
         for (int w : adj[u]) if (w == v) return true;
         return false;
-    }
-    static Graph generateRandom(int n, int seed) {
-        Graph g(n);
-        srand(seed);
-        for (int u = 0; u < n; u++)
-            for (int v = u + 1; v < n; v++)
-                if (rand() % 100 < 3)
-                    g.addEdge(u, v);
-        // ensure connected
-        vector<bool> visited(n, false);
-        queue<int> q; q.push(0); visited[0] = true;
-        while (!q.empty()) {
-            int u = q.front(); q.pop();
-            for (int v : g.adj[u])
-                if (!visited[v]) { visited[v] = true; q.push(v); }
-        }
-        for (int i = 1; i < n; i++) {
-            if (!visited[i]) {
-                g.addEdge(0, i);
-                visited[i] = true;
-            }
-        }
-        return g;
     }
 };
 
@@ -176,18 +163,6 @@ struct LocalBCC {
     set<int> art_local_set;            //for quick lookup
 };
 
-//bfs within a local bcc
-static vector<int> bfs_local(const LocalBCC& lb, int src) {
-    vector<int> dist(lb.K, -1);
-    queue<int> q;
-    dist[src] = 0; q.push(src);
-    while (!q.empty()) {
-        int u = q.front(); q.pop();
-        for (int v : lb.ladj[u])
-            if (dist[v] == -1) { dist[v] = dist[u] + 1; q.push(v); }
-    }
-    return dist;
-}
 
 //phase 2 bcc confined bitwise spmm
 void phase2_bcc_spmm(const Graph& g, const BCCDecomposition& bcc,
@@ -448,68 +423,18 @@ void phase4_assemble(const Graph& g, const BCCDecomposition& bcc,
     }
 }
 
-//dynamic edge insertion support
-struct DynamicResult {
-    double timeMs;
-    int edgesAdded;
-};
-
-DynamicResult dynamicInsert(Graph& g, const vector<pair<int,int>>& edges,
-                            vector<double>& cc) {
-    auto t0 = chrono::high_resolution_clock::now();
-
-    for (auto [u, v] : edges)
-        g.addEdge(u, v);
-
-    // Full redecompose (correct for insertions — BCCs may merge)
-    BCCDecomposition bcc(g.n);
-    bcc.run(g);
-
-    BCT bct;
-    bct.build(bcc);
-
-    vector<LocalBCC> lccs;
-    phase2_bcc_spmm(g, bcc, lccs);
-
-    phase4_assemble(g, bcc, lccs, bct, cc);
-
-    auto t1 = chrono::high_resolution_clock::now();
-    return {chrono::duration<double, milli>(t1 - t0).count(), (int)edges.size()};
-}
-
-//baseline sequential BFS CC
-void baseline_cc(const Graph& g, vector<double>& cc) {
-    int n = g.n;
-    cc.assign(n, 0.0);
-    for (int s = 0; s < n; s++) {
-        vector<int> dist(n, -1);
-        queue<int> q;
-        dist[s] = 0; q.push(s);
-        long long td = 0;
-        while (!q.empty()) {
-            int u = q.front(); q.pop();
-            for (int nb : g.adj[u])
-                if (dist[nb] == -1) { dist[nb] = dist[u]+1; q.push(nb); td += dist[nb]; }
-        }
-        if (td > 0) cc[s] = (double)(n - 1) / td;
-    }
-}
 
 
 int main(int argc, char* argv[]) {
-    int n       = (argc > 1) ? atoi(argv[1]) : 500;
-    int seed    = (argc > 2) ? atoi(argv[2]) : 42;
-    int threads = (argc > 3) ? atoi(argv[3]) : 4;
+    if (argc < 2) {
+        cout << "Usage: " << argv[0] << " <graph_file> [threads]" << endl;
+        return 1;
+    }
+    int threads = (argc > 2) ? atoi(argv[2]) : 4;
     omp_set_num_threads(threads);
 
-    Graph g = Graph::generateRandom(n, seed);
-
-    
-    printf("==============================================\n");
-    printf("BCC-Confined Vectorized Closeness Centrality\n");
-    printf("Sariyuce 2014 + Shukla 2020 -- Novel MIMD\n");
-    printf("==============================================\n");
-    printf("n=%d  m=%d  threads=%d\n\n", n, g.m, threads);
+    Graph g = Graph::readFromFile(argv[1]);
+    int n = g.n;
 
     //phase 1A: BCC decomposition
     auto t0 = chrono::high_resolution_clock::now();
@@ -544,58 +469,19 @@ int main(int argc, char* argv[]) {
 
     double total_ms = chrono::duration<double,milli>(t4-t0).count();
 
-    //baseline
-    auto tb0 = chrono::high_resolution_clock::now();
-    vector<double> ref_cc;
-    baseline_cc(g, ref_cc);
-    auto tb1 = chrono::high_resolution_clock::now();
-    double base_ms = chrono::duration<double,milli>(tb1-tb0).count();
+    cout << "Time: " << fixed << setprecision(1) << total_ms << " ms" << endl;
 
-    double max_err = 0.0, avg_err = 0.0;
-    for (int v = 0; v < n; v++) {
-        double e = fabs(my_cc[v] - ref_cc[v]);
-        max_err = max(max_err, e);
-        avg_err += e;
-    }
-    avg_err /= n;
-
-    printf("\n==============================================\n");
-    printf("RESULTS\n");
-    printf("==============================================\n");
-    printf("Baseline (seq BFS):     %.2f ms\n", base_ms);
-    printf("BCC-SpMM (our method):  %.2f ms\n", total_ms);
-    printf("Speedup:                %.2fx\n", base_ms / total_ms);
-    printf("Max CC error:           %.2e\n", max_err);
-    printf("Avg CC error:           %.2e\n", avg_err);
-    printf("Validation: %s\n", max_err < 1e-6 ? "PASSED" : "FAILED");
-
-    printf("\n-- BCC stats --\n");
-    long long total_work = 0;
-    for (auto& lb : lccs) total_work += (long long)lb.K * lb.K;
-    printf("Sum K^2 across BCCs:    %lld (vs N^2=%lld, ratio=%.3f)\n",
-           total_work, (long long)n*n, (double)total_work / (n*n));
-
-    printf("\n=== Dynamic Edge Insertions ===\n");
-    srand(123);
-    for (int b = 0; b < 3; b++) {
-        vector<pair<int,int>> edges;
-        for (int i = 0; i < 10; i++) {
-            int u = rand() % n, v = rand() % n;
-            while (v == u || g.hasEdge(u, v)) v = rand() % n;
-            edges.push_back({u, v});
-        }
-
-        auto res = dynamicInsert(g, edges, my_cc);
-
-        vector<double> check_cc;
-        baseline_cc(g, check_cc);
-        double err = 0;
-        for (int i = 0; i < n; i++) err = max(err, fabs(my_cc[i] - check_cc[i]));
-
-        printf("Batch %d: %d insertions | %.1f ms | err=%.1e %s\n",
-               b + 1, res.edgesAdded, res.timeMs, err,
-               err < 1e-6 ? "OK" : "ERR");
-    }
+    vector<int> idx(g.n);
+    iota(idx.begin(), idx.end(), 0);
+    sort(idx.begin(), idx.end(), [&](int a, int b) { return my_cc[a] > my_cc[b]; });
+    cout << "Top 10:" << endl;
+    for (int i = 0; i < min(10, g.n); i++)
+        cout << "  Node " << idx[i] << ": " << fixed << setprecision(64) << my_cc[idx[i]] << endl;
+    ofstream values("a/8.csv");
+    for (int i = 0; i < g.n; i++)
+        values << my_cc[i] << "\n";
+    ofstream csv("experiment.csv", ios::app);
+    csv << "8," << total_ms << "\n";
 
     return 0;
 }
