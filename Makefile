@@ -1,14 +1,24 @@
-CXX = g++
-CFLAGS = -O2 -std=c++17
+CXX      = g++
+CFLAGS   = -O2 -std=c++17
 OMPFLAGS = -fopenmp
 
-SEQ_TARGETS = 01_seq_naive_bfs 02_seq_multisource_bfs 03_seq_bcc_reduced
-PAR_TARGETS = 04_par_simple_mimd 05_par_mimd_msbfs 06_par_level_sync
-DYN_TARGETS = 07_dynamic_shukla
+SEQ_TARGETS   = 01_seq_naive_bfs 02_seq_multisource_bfs 03_seq_bcc_reduced
+PAR_TARGETS   = 04_par_simple_mimd 05_par_mimd_msbfs 06_par_level_sync
+DYN_TARGETS   = 07_dynamic_shukla
 NOVEL_TARGETS = 08_novel_bcc_spmm 09_novel_vdbcc
+GEN_TARGETS   = connected_graph_gen unconnected_graph_gen \
+                bi_connected_graph_gen1 bi_connected_graph_gen2
 
-all: $(SEQ_TARGETS) $(PAR_TARGETS) $(DYN_TARGETS) $(NOVEL_TARGETS)
+ALL_TARGETS = $(SEQ_TARGETS) $(PAR_TARGETS) $(DYN_TARGETS) \
+              $(NOVEL_TARGETS) $(GEN_TARGETS)
 
+# ─── Default target ────────────────────────────────────────────────────────────
+all: a $(ALL_TARGETS)
+
+a:
+	mkdir -p a
+
+# ─── Sequential algorithms ─────────────────────────────────────────────────────
 01_seq_naive_bfs: 01_seq_naive_bfs.cpp
 	$(CXX) $(CFLAGS) -o $@ $<
 
@@ -18,6 +28,7 @@ all: $(SEQ_TARGETS) $(PAR_TARGETS) $(DYN_TARGETS) $(NOVEL_TARGETS)
 03_seq_bcc_reduced: 03_seq_bcc_reduced.cpp
 	$(CXX) $(CFLAGS) -o $@ $<
 
+# ─── Parallel algorithms ───────────────────────────────────────────────────────
 04_par_simple_mimd: 04_par_simple_mimd.cpp
 	$(CXX) $(CFLAGS) $(OMPFLAGS) -o $@ $<
 
@@ -27,61 +38,49 @@ all: $(SEQ_TARGETS) $(PAR_TARGETS) $(DYN_TARGETS) $(NOVEL_TARGETS)
 06_par_level_sync: 06_par_level_sync.cpp
 	$(CXX) $(CFLAGS) $(OMPFLAGS) -o $@ $<
 
+# ─── Dynamic algorithm ─────────────────────────────────────────────────────────
 07_dynamic_shukla: 07_dynamic_shukla.cpp
 	$(CXX) $(CFLAGS) $(OMPFLAGS) -o $@ $<
 
+# ─── Novel algorithms ──────────────────────────────────────────────────────────
 08_novel_bcc_spmm: 08_novel_bcc_spmm.cpp
 	$(CXX) $(CFLAGS) $(OMPFLAGS) -o $@ $<
 
 09_novel_vdbcc: 09_novel_vdbcc.cpp
-	$(CXX) $(CFLAGS) $(OMPFLAGS) -o $@ $<		
-	
+	$(CXX) $(CFLAGS) $(OMPFLAGS) -o $@ $<
+
+# ─── Graph generators ──────────────────────────────────────────────────────────
+# NOTE: Rename bi_graph_gen1.cpp → bi_connected_graph_gen1.cpp
+#             bi_graph_gen2.cpp → bi_connected_graph_gen2.cpp
+#             Connected_graph_gen.cpp   → connected_graph_gen.cpp
+#             Unconnected_graph_gen.cpp → unconnected_graph_gen.cpp
+
+connected_graph_gen: connected_graph_gen.cpp
+	$(CXX) $(CFLAGS) -o $@ $<
+
+unconnected_graph_gen: unconnected_graph_gen.cpp
+	$(CXX) $(CFLAGS) -o $@ $<
+
+bi_connected_graph_gen1: bi_connected_graph_gen1.cpp
+	$(CXX) $(CFLAGS) -o $@ $<
+
+bi_connected_graph_gen2: bi_connected_graph_gen2.cpp
+	$(CXX) $(CFLAGS) -o $@ $<
+
+# ─── Utility targets ───────────────────────────────────────────────────────────
 clean:
-	rm -f $(SEQ_TARGETS) $(PAR_TARGETS) $(DYN_TARGETS) $(NOVEL_TARGETS)
+	rm -f $(ALL_TARGETS)
 
-run_all: all
-	@echo "========================================="
-	@echo "01: Sequential Naive BFS"
-	@echo "========================================="
-	@./01_seq_naive_bfs
-	@echo ""
-	@echo "========================================="
-	@echo "02: Sequential Multi-Source BFS"
-	@echo "========================================="
-	@./02_seq_multisource_bfs
-	@echo ""
-	@echo "========================================="
-	@echo "03: Sequential BCC + R3/R4 Reduction"
-	@echo "========================================="
-	@./03_seq_bcc_reduced
-	@echo ""
-	@echo "========================================="
-	@echo "04: Parallel Simple MIMD"
-	@echo "========================================="
-	@./04_par_simple_mimd
-	@echo ""
-	@echo "========================================="
-	@echo "05: Parallel MIMD + MS-BFS"
-	@echo "========================================="
-	@./05_par_mimd_msbfs
-	@echo ""
-	@echo "========================================="
-	@echo "06: Parallel Level-Sync Pull-Based"
-	@echo "========================================="
-	@./06_par_level_sync
-	@echo ""
-	@echo "========================================="
-	@echo "07: Dynamic (Shukla-style, MIMD)"
-	@echo "========================================="
-	@./07_dynamic_shukla
-	@echo ""
-	@echo "========================================="
-	@echo "08: Novel BCC-SpMM Hybrid (Dynamic)"
-	@echo "========================================="
-	@./08_novel_bcc_spmm
-	@echo ""	@echo "========================================="
-	@echo "09: Novel Vectorized Dynamic BCC Closeness Centrality"
-	@echo "========================================="
-	@./09_novel_vdbcc		
+clean_data:
+	rm -f experiment.csv connected_graph.csv unconnected_graph.csv \
+	      biconnected_graph.csv a/*.csv
 
-.PHONY: all clean run_all
+clean_all: clean clean_data
+
+seq:  a $(SEQ_TARGETS)
+par:  a $(PAR_TARGETS)
+dyn:  a $(DYN_TARGETS)
+novel: a $(NOVEL_TARGETS)
+gen:  $(GEN_TARGETS)
+
+.PHONY: all clean clean_data clean_all seq par dyn novel gen
