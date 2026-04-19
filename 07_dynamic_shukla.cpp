@@ -376,34 +376,7 @@ void phase4_assemble(const Graph& g, const BCCDecomposition& bcc,
     }
 }
 
-//dynamic edge insertion support
-struct DynamicResult {
-    double timeMs;
-    int edgesAdded;
-};
 
-DynamicResult dynamicInsert(Graph& g, const vector<pair<int,int>>& edges,
-                            vector<double>& cc) {
-    auto t0 = chrono::high_resolution_clock::now();
-
-    for (auto [u, v] : edges)
-        g.addEdge(u, v);
-
-    // Full redecompose (correct for insertions — BCCs may merge)
-    BCCDecomposition bcc(g.n);
-    bcc.run(g);
-
-    BCT bct;
-    bct.build(bcc);
-
-    vector<LocalBCC> lccs;
-    phase2_bcc_bfs(g, bcc, lccs);
-
-    phase4_assemble(g, bcc, lccs, bct, cc);
-
-    auto t1 = chrono::high_resolution_clock::now();
-    return {chrono::duration<double, milli>(t1 - t0).count(), (int)edges.size()};
-}
 
 int main(int argc, char* argv[]) {
     int threads;

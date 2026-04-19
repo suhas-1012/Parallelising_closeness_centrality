@@ -37,6 +37,9 @@ GRAPH_GEN  = "./bi_connected_graph_gen1"   # generates connected_graph.csv
 GRAPH_OUT  = "biconnected_graph.csv"
 OUTPUT_DIR = "experiment_results"
 
+# Global state to prevent re-generation
+LAST_GEN_PARAMS = {"n": None, "m": None, "seed": None}
+
 # Timing patterns accepted from stdout
 TIME_PATTERNS = [
     r'Time:\s*([\d.]+)\s*ms',
@@ -64,15 +67,30 @@ def ensure_dirs():
     os.makedirs("a", exist_ok=True)
 
 
-def generate_graph(n: int, m: int) -> bool:
+def generate_graph(n: int, m: int, seed: int) -> bool:
     """Call connected_graph_gen and verify output file exists."""
+    global LAST_GEN_PARAMS
+    
+    # Check if the graph on disk already matches these parameters
+    if (LAST_GEN_PARAMS["n"] == n and 
+        LAST_GEN_PARAMS["m"] == m and 
+        LAST_GEN_PARAMS["seed"] == seed and 
+        os.path.exists(GRAPH_OUT)):
+        return True
+
     if not os.path.exists(GRAPH_GEN):
         print(f"  [ERROR] Generator not found: {GRAPH_GEN}")
         print("  Compile with:  g++ -O2 -std=c++17 connected_graph_gen.cpp -o connected_graph_gen")
         return False
-    r = subprocess.run([GRAPH_GEN, str(n), str(m)],
+        
+    # Updated call to include seed
+    r = subprocess.run([GRAPH_GEN, str(n), str(m), str(seed)],
                        capture_output=True, text=True, timeout=120)
-    return os.path.exists(GRAPH_OUT)
+    
+    if os.path.exists(GRAPH_OUT):
+        LAST_GEN_PARAMS = {"n": n, "m": m, "seed": seed}
+        return True
+    return False
 
 
 def run_binary(sid: str, graph_file: str, threads: int | None) -> float | None:
@@ -233,22 +251,29 @@ def run_experiment(
     csv_extra_fn,            # fn(config_idx) → extra csv columns
     csv_name: str,
     plot_name: str,
+    seed_val: int,           # Added seed parameter
 ):
     n_configs = len(configs)
     # data[sid][config_idx] = [t1, t2, …]
     data = {sid: [[] for _ in range(n_configs)] for sid in selected}
     csv_rows = []
 
-    for run_i in range(n_runs):
-        print(f"\n  ── Run {run_i + 1}/{n_runs} ──")
-        for ci, (n, m, _) in enumerate(configs):
+    # Outer loop over configurations (Nodes/Edges/Threads)
+    for ci, (n, m, _) in enumerate(configs):
+        print(f"\n  ── Config: n={n:,} m={m:,} ──")
+        
+        # Inner loop over requested number of iterations
+        for run_i in range(n_runs):
+            print(f"    Run {run_i + 1}/{n_runs}")
+            
+            # Generate graph only once for this n, m, seed
             threads = threads_per_config[ci]
-            print(f"    n={n:,}  m={m:,}  threads={threads}  → generating … ", end="", flush=True)
-            ok = generate_graph(n, m)
-            print("ok" if ok else "FAILED")
+            ok = generate_graph(n, m, seed_val)
             if not ok:
+                print("      FAILED graph generation")
                 continue
 
+            # Run all selected binaries for this iteration
             for sid in selected:
                 _, _, thread_arg_mode, _ = BINARIES[sid]
                 t = run_binary(sid, GRAPH_OUT, threads if thread_arg_mode != "none" else None)
@@ -277,7 +302,7 @@ def run_experiment(
     return data
 
 
-def experiment1(selected, n_runs):
+def experiment1(selected, n_runs, seed):
     print("\n" + "━"*55)
     print("  EXPERIMENT 1 — Time vs Number of Nodes")
     print("  edges = n·log₂n,  threads = 16")
@@ -302,13 +327,14 @@ def experiment1(selected, n_runs):
         csv_extra_fn   = lambda ci, n, m, t: [n, m, t],
         csv_name       = "exp1_time_vs_nodes",
         plot_name      = "graph1_time_vs_nodes",
+        seed_val       = seed,
     )
 
 
-def experiment2(selected, n_runs):
+def experiment2(selected, n_runs, seed):
     print("\n" + "━"*55)
     print("  EXPERIMENT 2 — Time vs Number of Edges")
-    print("  n = 500 000,  threads = 16")
+    print("  n = 50 000,  threads = 16")
     print("━"*55)
 
     N       = 50_000
@@ -332,10 +358,11 @@ def experiment2(selected, n_runs):
         csv_extra_fn   = lambda ci, n, m, t: [n, m, ci + 1, t],
         csv_name       = "exp2_time_vs_edges",
         plot_name      = "graph2_time_vs_edges",
+        seed_val       = seed,
     )
 
 
-def experiment3(selected, n_runs):
+def experiment3(selected, n_runs, seed):
     print("\n" + "━"*55)
     print("  EXPERIMENT 3 — Time vs Number of Threads")
     print("  n = 50 000,  edges = 5·n·log₂n")
@@ -366,6 +393,7 @@ def experiment3(selected, n_runs):
         csv_extra_fn   = lambda ci, n, m, t: [n, m, t],
         csv_name       = "exp3_time_vs_threads",
         plot_name      = "graph3_time_vs_threads",
+        seed_val       = seed,
     )
 
 
@@ -428,6 +456,12 @@ def main():
         print("[ERROR] Enter a positive integer.")
         return
 
+    try:
+        seed = int(input("Enter seed for graph generation: "))
+    except ValueError:
+        print("[ERROR] Enter an integer for the seed.")
+        return
+
     print("\nWhich experiments to run?")
     print("  1 — Time vs Nodes   (n=100K…1M, edges=n·log₂n, threads=16)")
     print("  2 — Time vs Edges   (n=500K, edges=1…10×n·log₂n, threads=16)")
@@ -443,11 +477,11 @@ def main():
     np.random.seed(0)   # reproducible jitter
 
     if "1" in run_set:
-        experiment1(selected, n_runs)
+        experiment1(selected, n_runs, seed)
     if "2" in run_set:
-        experiment2(selected, n_runs)
+        experiment2(selected, n_runs, seed)
     if "3" in run_set:
-        experiment3(selected, n_runs)
+        experiment3(selected, n_runs, seed)
 
     print(f"\n✓ Done!  All results saved to ./{OUTPUT_DIR}/")
     print("  Files: graph1_time_vs_nodes.png/pdf")

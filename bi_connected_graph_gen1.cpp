@@ -11,13 +11,14 @@ void add_edge(int u, int v) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 3) {
-        cout << "Usage: ./bi n m\n";
+    if (argc < 4) {
+        cout << "Usage: ./bi n m seed\n";
         return 0;
     }
 
     int n = atoi(argv[1]);
     int m = atoi(argv[2]);
+    int seed = atoi(argv[3]);  // only addition
 
     if (n < 6) {
         cout << "Need n >= 6\n";
@@ -65,7 +66,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Step 4: add extra edges ONLY inside blocks
-    srand(42);
+    srand(seed);  // only change (was srand(42))
 
     while ((int)edges.size() < m) {
         int b = rand() % blocks.size();
