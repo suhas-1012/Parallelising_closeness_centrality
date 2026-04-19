@@ -1,5 +1,7 @@
 CXX      = g++
-CFLAGS   = -O2 -std=c++17
+CFLAGS3  = -O3 -std=c++17
+CFLAGS2   = -O2 -std=c++17
+CFLAGS   = -std=c++17
 OMPFLAGS = -fopenmp
 
 SEQ_TARGETS   = 01_seq_naive_bfs 02_seq_multisource_bfs 03_seq_bcc_reduced
@@ -56,16 +58,16 @@ a:
 #             Unconnected_graph_gen.cpp → unconnected_graph_gen.cpp
 
 connected_graph_gen: connected_graph_gen.cpp
-	$(CXX) $(CFLAGS) -o $@ $<
+	$(CXX) $(CFLAGS3) -o $@ $<
 
 unconnected_graph_gen: unconnected_graph_gen.cpp
-	$(CXX) $(CFLAGS) -o $@ $<
+	$(CXX) $(CFLAGS3) -o $@ $<
 
 bi_connected_graph_gen1: bi_connected_graph_gen1.cpp
-	$(CXX) $(CFLAGS) -o $@ $<
+	$(CXX) $(CFLAGS3) -o $@ $<
 
 bi_connected_graph_gen2: bi_connected_graph_gen2.cpp
-	$(CXX) $(CFLAGS) -o $@ $<
+	$(CXX) $(CFLAGS3) -o $@ $<
 
 # ─── Utility targets ───────────────────────────────────────────────────────────
 clean:
@@ -73,7 +75,7 @@ clean:
 
 clean_data:
 	rm -f experiment.csv connected_graph.csv unconnected_graph.csv \
-	      biconnected_graph.csv a/*.csv
+	      biconnected_graph.csv a/*.csv biconnected_graph.csv
 
 clean_all: clean clean_data
 

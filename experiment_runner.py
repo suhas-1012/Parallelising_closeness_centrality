@@ -17,21 +17,23 @@ import matplotlib.patches as mpatches
 from itertools import cycle
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  Binary metadata:  id → (executable_name, short_label, needs_threads)
+#  Binary metadata:
+#    id → (executable_name, short_label, thread_arg_mode, is_parallel)
+#  thread_arg_mode: "none" | "optional" | "required"
 # ──────────────────────────────────────────────────────────────────────────────
 BINARIES = {
-    "01": ("01_seq_naive_bfs",        "Seq Naive BFS",      False),
-    "02": ("02_seq_multisource_bfs",  "Seq MS-BFS",         False),
-    "03": ("03_seq_bcc_reduced",      "Seq BCC+R3/R4",      False),
-    "04": ("04_par_simple_mimd",      "Par MIMD",           False),
-    "05": ("05_par_mimd_msbfs",       "Par MIMD+MS-BFS",    False),
-    "06": ("06_par_level_sync",       "Par Level-Sync",     False),
-    "07": ("07_dynamic_shukla",       "Dyn Shukla",         True),
-    "08": ("08_novel_bcc_spmm",       "Novel BCC-SpMM",     True),
-    "09": ("09_novel_vdbcc",          "Novel VD-BCC",       True),
+    "01": ("01_seq_naive_bfs",        "Seq Naive BFS",      "none",     False),
+    "02": ("02_seq_multisource_bfs",  "Seq MS-BFS",         "none",     False),
+    "03": ("03_seq_bcc_reduced",      "Seq BCC+R3/R4",      "none",     False),
+    "04": ("04_par_simple_mimd",      "Par MIMD",           "required", True),
+    "05": ("05_par_mimd_msbfs",       "Par MIMD+MS-BFS",    "required", True),
+    "06": ("06_par_level_sync",       "Par Level-Sync",     "optional", True),
+    "07": ("07_dynamic_shukla",       "Dyn Shukla",         "required", True),
+    "08": ("08_novel_bcc_spmm",       "Novel BCC-SpMM",     "optional", True),
+    "09": ("09_novel_vdbcc",          "Novel VD-BCC",       "none",     False),
 }
 
-GRAPH_GEN  = "./bi_connected_graph"   # generates connected_graph.csv
+GRAPH_GEN  = "./bi_connected_graph_gen1"   # generates connected_graph.csv
 GRAPH_OUT  = "biconnected_graph.csv"
 OUTPUT_DIR = "experiment_results"
 
@@ -75,14 +77,14 @@ def generate_graph(n: int, m: int) -> bool:
 
 def run_binary(sid: str, graph_file: str, threads: int | None) -> float | None:
     """Run one binary; return elapsed ms parsed from stdout, or None."""
-    exe, _, needs_threads = BINARIES[sid]
+    exe, _, thread_arg_mode, _ = BINARIES[sid]
     path = f"./{exe}"
     if not os.path.exists(path):
         print(f"  [SKIP] {path} not found")
         return None
 
     cmd = [path, graph_file]
-    if needs_threads and threads is not None:
+    if thread_arg_mode in ("required", "optional") and threads is not None:
         cmd.append(str(threads))
 
     try:
@@ -248,8 +250,8 @@ def run_experiment(
                 continue
 
             for sid in selected:
-                _, _, needs_threads = BINARIES[sid]
-                t = run_binary(sid, GRAPH_OUT, threads if needs_threads else None)
+                _, _, thread_arg_mode, _ = BINARIES[sid]
+                t = run_binary(sid, GRAPH_OUT, threads if thread_arg_mode != "none" else None)
                 data[sid][ci].append(t)
                 print(f"      [{sid}] {t:.1f} ms" if t else f"      [{sid}] FAIL")
                 csv_rows.append([sid, run_i + 1, *csv_extra_fn(ci, n, m, threads), t])
@@ -377,8 +379,8 @@ def select_binaries() -> list[str]:
     print("├────┬───────────────────────────────┬────────────────┤")
     print("│ ID │ Description                   │ Type           │")
     print("├────┼───────────────────────────────┼────────────────┤")
-    for sid, (exe, desc, par) in BINARIES.items():
-        kind = "Parallel (OMP)" if par else "Sequential    "
+    for sid, (exe, desc, _, is_parallel) in BINARIES.items():
+        kind = "Parallel (OMP)" if is_parallel else "Sequential    "
         exist = "✓" if os.path.exists(f"./{exe}") else "✗ (not built)"
         print(f"│ {sid} │ {desc:<29} │ {kind}  {exist} │")
     print("└────┴───────────────────────────────┴────────────────┘")

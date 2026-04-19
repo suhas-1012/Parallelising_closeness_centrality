@@ -119,7 +119,7 @@ int main(int argc, char* argv[]) {
     double par_ms = chrono::duration<double, milli>(t1 - t0).count();
 
 
-    cout << "Parallel time:   " << fixed << setprecision(1) << par_ms << " ms" << endl;
+    cout << "Time: " << fixed << setprecision(1) << par_ms << " ms" << endl;
     vector<int> idx(n);
     iota(idx.begin(), idx.end(), 0);
     sort(idx.begin(), idx.end(), [&](int a, int b) { return cc_par[a] > cc_par[b]; });

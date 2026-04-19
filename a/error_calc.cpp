@@ -48,28 +48,29 @@ double computeMSE(const vector<double>& A, const vector<double>& B) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
+    if (argc < 3) {
         cout << "Usage: ./error k\n";
         return 1;
     }
 
-    int k = stoi(argv[1]);
+    int a = stoi(argv[1]);
+    int b = stoi(argv[2]);
 
-    vector<vector<double>> allData(k + 1);
+    vector<vector<double>> allData(b-a + 2);
 
-    for (int i = 1; i <= k; i++) {
+    for (int i = a; i <= b; i++) {
         string filename = to_string(i) + ".csv";
-        allData[i] = readCSV(filename);
+        allData[i-a+1] = readCSV(filename);
 
-        if (allData[i].empty()) {
+        if (allData[i-a+1].empty()) {
             cerr << "Warning: " << filename << " has no valid data\n";
         }
     }
 
     // Pairwise MSE
-    for (int i = 1; i <= k; i++) {
-        for (int j = i + 1; j <= k; j++) {
-            double mse = computeMSE(allData[i], allData[j]);
+    for (int i = a; i <= b; i++) {
+        for (int j = i + 1; j <= b; j++) {
+            double mse = computeMSE(allData[i-a+1], allData[j-a+1]);
             cout << i << "," << j << " -> " << mse << endl;
         }
     }
