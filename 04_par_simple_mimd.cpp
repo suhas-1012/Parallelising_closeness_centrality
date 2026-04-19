@@ -55,9 +55,6 @@ vector<double> parallel_naive_cc(const Graph& g, int nThreads) {
 int main(int argc, char* argv[]) {
     Graph g;
     int nThreads = omp_get_max_threads();
-    // if (argc > 1) g = Graph::readFromFile(argv[1]);
-    // else g = Graph::generateRandom(2000, 8000);
-    // if (argc > 2) nThreads = atoi(argv[2]);
     if (argc > 2) {
         g = Graph::readFromFile(argv[1]);
         nThreads = atoi(argv[2]);
