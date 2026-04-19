@@ -22,7 +22,7 @@ for f in "${FILES[@]}"; do
     bin_name="${f%.cpp}.bin"
     echo "  -> compiling $f to $bin_name"
     # we use -fopenmp for all, as 04, 05, 06, 08 need it
-    g++ -std=c++17 -O3 "$f" -o "$bin_name" -fopenmp
+    g++ -std=c++17 "$f" -o "$bin_name" -fopenmp
 done
 echo "Compilation complete."
 echo "=================================================="

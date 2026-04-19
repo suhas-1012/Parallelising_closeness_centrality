@@ -52,24 +52,53 @@ struct BCCDecomposition {
     BCCDecomposition(int n) : n(n), timer_cnt(0),
         disc(n, -1), low(n, -1), par(n, -1), is_art(n, false) {}
 
-    void dfs(const Graph& g, int u, vector<pair<int,int>>& stk) {
-        disc[u] = low[u] = timer_cnt++;
-        int children = 0;
-        for (int v : g.adj[u]) {
-            if (disc[v] == -1) {
-                children++;
-                par[v] = u;
-                stk.push_back({u, v});
-                dfs(g, v, stk);
-                low[u] = min(low[u], low[v]);
-                if ((par[u] == -1 && children > 1) ||
-                    (par[u] != -1 && low[v] >= disc[u])) {
-                    is_art[u] = true;
-                    extract_bcc(stk, u, v);
+    struct DFSFrame {
+        int u;
+        int idx;
+        int children;
+    };
+
+    void dfs(const Graph& g, int start_u, vector<pair<int,int>>& stk) {
+        vector<DFSFrame> call_stack;
+        
+        disc[start_u] = low[start_u] = timer_cnt++;
+        call_stack.push_back({start_u, 0, 0});
+
+        while (!call_stack.empty()) {
+            DFSFrame& f = call_stack.back();
+            int u = f.u;
+
+            bool pushed = false;
+            while (f.idx < (int)g.adj[u].size()) {
+                int v = g.adj[u][f.idx++];
+                if (disc[v] == -1) {
+                    f.children++;
+                    par[v] = u;
+                    stk.push_back({u, v});
+                    disc[v] = low[v] = timer_cnt++;
+                    call_stack.push_back({v, 0, 0});
+                    pushed = true;
+                    break;
+                } else if (v != par[u] && disc[v] < disc[u]) {
+                    low[u] = min(low[u], disc[v]);
+                    stk.push_back({u, v});
                 }
-            } else if (v != par[u] && disc[v] < disc[u]) {
-                low[u] = min(low[u], disc[v]);
-                stk.push_back({u, v});
+            }
+
+            if (pushed) continue;
+
+            call_stack.pop_back();
+            if (!call_stack.empty()) {
+                DFSFrame& p_frame = call_stack.back();
+                int p = p_frame.u;
+                
+                low[p] = min(low[p], low[u]);
+                
+                if ((par[p] == -1 && p_frame.children > 1) ||
+                    (par[p] != -1 && low[u] >= disc[p])) {
+                    is_art[p] = true;
+                    extract_bcc(stk, p, u);
+                }
             }
         }
     }
