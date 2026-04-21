@@ -35,6 +35,7 @@ vector<double> parallel_msbfs_cc(const Graph& g, int nThreads) {
     int numBatches = (n + BATCH - 1) / BATCH;
 
     vector<vector<double>> threadSumDist(nThreads, vector<double>(n, 0.0));
+    vector<vector<double>> threadReachable(nThreads, vector<double>(n, 0.0));
 
     #pragma omp parallel num_threads(nThreads)
     {
@@ -74,7 +75,9 @@ vector<double> parallel_msbfs_cc(const Graph& g, int nThreads) {
                     if (nextF[v] != 0ULL) {
                         active = true;
                         visited[v] |= nextF[v];
-                        threadSumDist[tid][v] += (double)__builtin_popcountll(nextF[v]) * level;
+                        double count = (double)__builtin_popcountll(nextF[v]);
+                        threadSumDist[tid][v] += count * level;
+                        threadReachable[tid][v] += count;
                     }
                 }
 
@@ -87,10 +90,13 @@ vector<double> parallel_msbfs_cc(const Graph& g, int nThreads) {
     #pragma omp parallel for num_threads(nThreads)
     for (int v = 0; v < n; v++) {
         double total = 0.0;
-        for (int t = 0; t < nThreads; t++)
+        double reachable = 0.0;
+        for (int t = 0; t < nThreads; t++) {
             total += threadSumDist[t][v];
+            reachable += threadReachable[t][v];
+        }
         if (total > 0.0)
-            cc[v] = (double)(n - 1) / total;
+            cc[v] = (reachable * reachable) / ((double)(n - 1) * total);
     }
     return cc;
 }

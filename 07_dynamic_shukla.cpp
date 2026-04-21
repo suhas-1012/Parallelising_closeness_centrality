@@ -372,7 +372,7 @@ void phase4_assemble(const Graph& g, const BCCDecomposition& bcc,
         long long reachable = min((long long)(lb.K) + ext_total - 1, (long long)(n - 1));
 
         if (D > 0)
-            cc[v] = (double)reachable / (double)D;
+            cc[v] = ((double)reachable * (double)reachable) / ((double)(n - 1) * (double)D);
     }
 }
 
